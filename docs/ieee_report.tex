@@ -14,22 +14,22 @@
 
 \author{
 \IEEEauthorblockN{Luiz Henrique}
-\IEEEauthorblockA{\textit{Departamento de Ci\^{e}ncia da Computa\c{c}\~{a}o} \\
+\IEEEauthorblockA{\textit{xxxxxxxxxxxxxxxxxxxxxxx\c{c}\~{a}o} \\
 \textit{Universidade Federal de Pernambuco} \\
 Recife, Brazil \\
-luizlinkezio@gmail.com}
+lhbas@cin.ufpe.br}
 \and
 \IEEEauthorblockN{Jos\'{e} Ronaldo}
-\IEEEauthorblockA{\textit{Departamento de Ci\^{e}ncia da Computa\c{c}\~{a}o} \\
+\IEEEauthorblockA{\textit{xxxxxxxxxxxxxxxxxxxxxxxxxxxx\c{c}\~{a}o} \\
 \textit{Universidade Federal de Pernambuco} \\
 Recife, Brazil \\
-email address}
+jrss@cin.ufpe.br}
 }
 
 \maketitle
 
 \begin{abstract}
-Selecting an appropriate learning rate is one of the most critical decisions in training neural networks effectively. We investigate and compare four learning rate strategies on the CIFAR-10 image classification benchmark using a lightweight convolutional neural network trained with the Adam optimizer for 150 epochs: (1) a fixed-rate Adam baseline, (2) a polling-based method that dynamically selects the best candidate learning rate at each gradient step, (3) a Loss Responsive Learning Rate Scheduler that adjusts the rate according to loss improvement ratios, and (4) a hybrid Improved Polling method combining formula-driven factors with batch-level candidate selection. The Loss Responsive LR Scheduler achieves the best validation accuracy of 46.95\% and test accuracy of 55.88\%, surpassing the Adam baseline of 42.90\%. The Polling method closely matches the baseline without any explicit LR tuning, while the Improved Polling method underperforms due to a learning rate collapse caused by selection bias toward smaller gradient steps. Our results reveal fundamental trade-offs between exploration-driven and formula-driven adaptive learning rate strategies.
+Selecting an appropriate learning rate is one of the most critical decisions in training neural networks effectively. This work has two objectives: (1) to replicate the Polling Method proposed by Tan et al. on the CIFAR-10 benchmark, adapting it from the original ANN setting to a convolutional neural network trained with Adam, and (2) to propose and evaluate two novel extensions --- a Loss Responsive Learning Rate Scheduler and an Improved Polling method --- against a fixed-rate Adam baseline over 150 epochs. The replicated Polling method matches the baseline at 42.20\% test accuracy without any explicit LR tuning, confirming its effectiveness as an adaptive strategy. The Loss Responsive LR Scheduler surpasses both, achieving 46.95\% best validation accuracy and 55.88\% test accuracy, while the Improved Polling method underperforms due to a learning rate collapse caused by selection bias toward smaller gradient steps. Our results reveal fundamental trade-offs between exploration-driven and formula-driven adaptive strategies and highlight open challenges in combining both paradigms.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -42,11 +42,11 @@ The learning rate (LR) is arguably the most influential hyperparameter in gradie
 
 Existing approaches range from formula-based schedulers (step decay, cosine annealing, ReduceLROnPlateau) to optimizers with built-in per-parameter adaptation such as Adam \cite{b1} and RMSProp. A fundamentally different paradigm is \emph{polling optimization}, introduced in \cite{b2}: rather than computing a single LR-scaled update, multiple candidate learning rates are tested at each gradient step and the one that most improves performance on the current batch is selected. This exploration-based approach requires no hand-designed formula and adapts implicitly to the loss landscape.
 
-In this work, we evaluate the polling idea alongside two novel variants --- a Loss Responsive LR Scheduler and an Improved Polling method --- against a fixed-rate Adam baseline on CIFAR-10 image classification. We report training dynamics, convergence speed, and generalization accuracy to provide a comparative analysis across these strategies.
+This work pursues two goals. First, we replicate the Polling Method on CIFAR-10, adapting it from the original ANN and MNIST setting to a convolutional neural network trained with Adam --- a setup that differs from the original in architecture, optimizer, and candidate LR range. Second, we propose two novel extensions (a Loss Responsive LR Scheduler and an Improved Polling method) and compare all four strategies against a fixed-rate Adam baseline. We report training dynamics, convergence speed, and generalization accuracy across 150 epochs.
 
 \section{Proposed Solution}
 
-\subsection{Polling Method}
+\subsection{Replicated Method: Polling}
 
 The Polling Method, proposed by Tan et al.~\cite{b2}, replaces the standard single-LR gradient step with an ensemble selection procedure. At every training batch, after computing gradients, $N$ candidate learning rates are applied independently and the model weights that achieve the highest batch accuracy are retained.
 
@@ -61,9 +61,13 @@ k^{*} = \arg\max_{k} \; \mathrm{acc}(\hat{\theta}_{t,k},\, \mathcal{B}_t)
 \theta_{t+1} = \hat{\theta}_{t,k^{*}}
 \end{equation}
 
-where $\mathcal{B}_t$ is the current mini-batch. We use $\mathcal{C} = \{10^{-7},\, 10^{-6},\, 10^{-5},\, 10^{-4},\, 10^{-3}\}$ centered around the base LR $= 10^{-5}$.
+where $\mathcal{B}_t$ is the current mini-batch. We use $\mathcal{C} = \{10^{-7},\, 10^{-6},\, 10^{-5},\, 10^{-4},\, 10^{-3}\}$ centered around the base LR $= 10^{-5}$. Note that Tan et al.\ originally used LRs in the range $[0.01, 0.05]$ with a simple ANN and SGD-like updates; our candidate set is adapted to the Adam optimizer and CNN setting.
 
-\subsection{Loss Responsive LR Scheduler}
+\subsection{Proposed Extensions}
+
+The following two methods are novel contributions of this work, extending the polling paradigm with formula-driven adaptation.
+
+\subsubsection{Loss Responsive LR Scheduler}
 
 The Loss Responsive LR Scheduler adjusts the learning rate based on how much the loss improves over a fixed patience window. An exponential moving average (EMA) smooths the loss signal to reduce stochasticity:
 
@@ -90,7 +94,7 @@ When loss is not improving ($r \leq 1$), a bounded mirror formula is applied:
 
 Parameters used: patience $= 30$, $\beta = 0.9$, no LR bounds.
 
-\subsection{Improved Polling Method}
+\subsubsection{Improved Polling Method}
 
 The Improved Polling Method combines formula-driven adaptation with candidate selection. Instead of $N$ fixed candidates, it derives two adaptive factors from the current loss improvement ratio and tests three candidates:
 
@@ -117,6 +121,10 @@ Images are normalized per channel using training set statistics (RGB means: $[12
 \subsection{Baseline Replication}
 
 The baseline applies Adam with a fixed learning rate of $10^{-5}$ throughout all 150 epochs. This configuration serves as the reference point for all comparisons. As shown in Fig.~\ref{fig:comparison}, validation loss decreases monotonically and accuracy improves steadily with no signs of divergence or overfitting, achieving 42.88\% best validation accuracy and 42.90\% test accuracy. The conservative LR ensures stable, predictable convergence, providing a clean lower-bound reference.
+
+\subsection{Polling Method Replication}
+
+The primary experimental goal of this work is to replicate the Polling Method of Tan et al.~\cite{b2} in a new setting. The original paper evaluated it on MNIST with a two-layer ANN and candidate LRs in $[0.01, 0.05]$. Our replication targets CIFAR-10, a harder 10-class benchmark, using a CNN (\texttt{SimpleCIFAR10CNN}) and the Adam optimizer with candidate LRs spanning five orders of magnitude ($10^{-7}$ to $10^{-3}$). Despite these differences in architecture, optimizer, and dataset, the core algorithm is preserved exactly: at each batch, $N$ independent weight updates are evaluated and the one with highest batch accuracy is kept. The replication result (42.20\% test accuracy, closely tracking the baseline of 42.90\%) confirms that the polling selection mechanism is viable and transferable across settings, even when the candidate LR range and optimizer differ substantially from the original.
 
 \section{Results}
 
