@@ -81,17 +81,13 @@ Every \texttt{patience} steps the improvement ratio is computed as:
 r = \frac{\ell_{\mathrm{ref}}}{\ell_t^{\mathrm{ema}}}
 \end{equation}
 
-The direction (increase or decrease) alternates each check, and the LR update applies logarithmic formulas that pass through $(1, 1)$, ensuring no change when $r = 1$. When loss is improving ($r > 1$):
+The same logarithmic formula family is applied in both the improving and non-improving cases. The LR update passes through $(1, 1)$, ensuring no change when $r = 1$, and a direction flag (increase or decrease) selects the formula variant:
 \begin{align}
 \text{Increase:} & \quad lr \leftarrow lr \cdot (1 + \log r) \\
 \text{Decrease:} & \quad lr \leftarrow \frac{lr}{1 + \log r}
 \end{align}
 
-When loss is not improving ($r \leq 1$), a bounded mirror formula is applied:
-\begin{align}
-\text{Increase:} & \quad lr \leftarrow lr \cdot 2(1 - 2^{-r}) \\
-\text{Decrease:} & \quad lr \leftarrow \frac{lr}{2(1 - 2^{-r})}
-\end{align}
+When loss is improving ($r > 1$), $\log r > 0$, so the increase factor exceeds 1 and the decrease factor is below 1; the direction flag is \emph{not} changed. When loss is not improving ($r \leq 1$), $\log r \leq 0$, which naturally inverts the effect of each formula (the ``increase'' variant yields a factor $\leq 1$ and the ``decrease'' variant a factor $\geq 1$); the direction flag \emph{alternates} after each such check to enable oscillatory exploration.
 
 Parameters used: patience $= 30$, $\beta = 0.9$, no LR bounds.
 
@@ -169,7 +165,7 @@ The Polling Method demonstrates that a simple batch-level selection over candida
 
 \subsection{Loss Responsive LR: Effectiveness and Fragility}
 
-The Loss Responsive LR Scheduler achieves the strongest results, benefiting from aggressive LR growth when the model improves rapidly and conservative reduction otherwise. However, once the LR falls below a critical threshold it never recovers, since the alternating direction logic does not distinguish between a productive decrease and premature collapse. This fragility is sensitive to the patience window and $\beta$ parameters --- a poorly timed direction reversal causes irreversible decay.
+The Loss Responsive LR Scheduler achieves the strongest results, benefiting from aggressive LR growth when the model improves rapidly and conservative reduction otherwise. However, once the LR falls below a critical threshold it never recovers: the direction flag alternates only on non-improving steps, and the log formula naturally yields shrinking factors when $r \leq 1$, creating a feedback loop of small updates that is difficult to escape. This fragility is sensitive to the patience window and $\beta$ parameters --- a poorly timed sequence of non-improving steps drives irreversible LR decay.
 
 \subsection{LR Collapse in Improved Polling}
 
