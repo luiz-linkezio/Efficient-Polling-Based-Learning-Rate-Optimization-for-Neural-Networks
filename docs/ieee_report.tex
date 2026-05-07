@@ -81,13 +81,24 @@ Every \texttt{patience} steps the improvement ratio is computed as:
 r = \frac{\ell_{\mathrm{ref}}}{\ell_t^{\mathrm{ema}}}
 \end{equation}
 
-The same logarithmic formula family is applied in both the improving and non-improving cases. The LR update passes through $(1, 1)$, ensuring no change when $r = 1$, and a direction flag (increase or decrease) selects the formula variant:
+Two logarithmic factors are defined, both passing through $(1,1)$:
 \begin{align}
-\text{Increase:} & \quad lr \leftarrow lr \cdot (1 + \log r) \\
-\text{Decrease:} & \quad lr \leftarrow \frac{lr}{1 + \log r}
+f_{\uparrow}(r) &= 1 + \log r \\
+f_{\downarrow}(r) &= \frac{1}{1 + \log r}
 \end{align}
 
-When loss is improving ($r > 1$), $\log r > 0$, so the increase factor exceeds 1 and the decrease factor is below 1; the direction flag is \emph{not} changed. When loss is not improving ($r \leq 1$), $\log r \leq 0$, which naturally inverts the effect of each formula (the ``increase'' variant yields a factor $\leq 1$ and the ``decrease'' variant a factor $\geq 1$); the direction flag \emph{alternates} after each such check to enable oscillatory exploration.
+A direction flag $d \in \{\uparrow, \downarrow\}$ controls whether the LR should increase or decrease. The formula applied at each check is chosen so that $d$ always reflects the true direction of the update:
+\begin{equation}
+lr \leftarrow
+\begin{cases}
+lr \cdot f_{\uparrow}(r) & \text{if } d = \uparrow \text{ and } r > 1 \\
+lr \cdot f_{\downarrow}(r) & \text{if } d = \downarrow \text{ and } r > 1 \\
+lr \cdot f_{\downarrow}(r) & \text{if } d = \uparrow \text{ and } r \leq 1 \\
+lr \cdot f_{\uparrow}(r)  & \text{if } d = \downarrow \text{ and } r \leq 1
+\end{cases}
+\end{equation}
+
+When $r > 1$, $\log r > 0$, so $f_{\uparrow} > 1$ and $f_{\downarrow} < 1$; the natural assignment applies and $d$ is unchanged. When $r \leq 1$, $\log r \leq 0$, so the roles invert: $f_{\downarrow}(r) \geq 1$ and $f_{\uparrow}(r) \leq 1$; the formulas are therefore swapped relative to the improving case, so that $d = \uparrow$ still produces an LR increase and $d = \downarrow$ still produces a decrease. After every non-improving check $d$ alternates to enable oscillatory exploration.
 
 Parameters used: patience $= 30$, $\beta = 0.9$, no LR bounds.
 
@@ -165,7 +176,7 @@ The Polling Method demonstrates that a simple batch-level selection over candida
 
 \subsection{Loss Responsive LR: Effectiveness and Fragility}
 
-The Loss Responsive LR Scheduler achieves the strongest results, benefiting from aggressive LR growth when the model improves rapidly and conservative reduction otherwise. However, once the LR falls below a critical threshold it never recovers: the direction flag alternates only on non-improving steps, and the log formula naturally yields shrinking factors when $r \leq 1$, creating a feedback loop of small updates that is difficult to escape. This fragility is sensitive to the patience window and $\beta$ parameters --- a poorly timed sequence of non-improving steps drives irreversible LR decay.
+The Loss Responsive LR Scheduler achieves the strongest results, benefiting from aggressive LR growth when the model improves rapidly and conservative reduction otherwise. However, once the LR falls below a critical threshold it never recovers. The direction flag alternates only on non-improving steps ($r \leq 1$), and for $r$ close to zero the log factors approach zero or become undefined, so consecutive non-improving windows produce near-zero multipliers regardless of direction. This fragility is sensitive to the patience window and $\beta$ parameters --- a prolonged plateau can trigger irreversible LR decay even when the model has not fully converged.
 
 \subsection{LR Collapse in Improved Polling}
 
