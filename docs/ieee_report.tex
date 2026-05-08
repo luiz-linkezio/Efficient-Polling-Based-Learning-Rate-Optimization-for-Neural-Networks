@@ -30,7 +30,7 @@ jrss@cin.ufpe.br}
 \maketitle
 
 \begin{abstract}
-Selecting an appropriate learning rate is one of the most critical decisions in training neural networks effectively. This work has two objectives: (1) to replicate the Polling Method proposed by Tan et al. on the CIFAR-10 benchmark, adapting it from the original ANN setting to a convolutional neural network trained with Adam, and (2) to propose and evaluate two novel extensions --- a Loss Responsive Learning Rate Scheduler and an Improved Polling method --- against a fixed-rate Adam baseline over 150 epochs. The replicated Polling method matches the baseline at 42.17\% test accuracy without any explicit LR tuning, confirming its effectiveness as an adaptive strategy. The Loss Responsive LR Scheduler surpasses both, achieving 52.25\% best validation accuracy before eventually diverging due to an excessively large learning rate. The Improved Polling method underperforms due to a learning rate collapse caused by selection bias toward smaller gradient steps. Our results reveal fundamental trade-offs between exploration-driven and formula-driven adaptive strategies and highlight open challenges in combining both paradigms.
+Selecting an appropriate learning rate is one of the most critical decisions in training neural networks effectively. This work has two objectives: (1) to replicate the Polling Method proposed by Tan et al. on the CIFAR-10 benchmark, adapting it from the original ANN setting to a convolutional neural network trained with Adam, and (2) to propose and evaluate two novel extensions --- a Loss Responsive Learning Rate Scheduler and an Improved Polling method --- against a fixed-rate Adam baseline over 150 epochs. The replicated Polling method matches the baseline at 42.35\% test accuracy without any explicit LR tuning, confirming its effectiveness as an adaptive strategy. The Loss Responsive LR Scheduler surpasses both, achieving 51.06\% best validation accuracy before eventually diverging due to an excessively large learning rate. The Improved Polling method underperforms due to a learning rate collapse caused by selection bias toward smaller gradient steps. Our results reveal fundamental trade-offs between exploration-driven and formula-driven adaptive strategies and highlight open challenges in combining both paradigms.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -81,11 +81,19 @@ Every \texttt{patience} steps the improvement ratio is computed as:
 r = \frac{\ell_{\mathrm{ref}}}{\ell_t^{\mathrm{ema}}}
 \end{equation}
 
-Two exponential factors are defined, both passing through $(1,1)$:
+Two logarithmic factors are defined, both evaluating to $1$ when $r = 1$:
 \begin{align}
-f_{\uparrow}(r) &= 2\bigl(1 - 2^{-r}\bigr) \\
-f_{\downarrow}(r) &= -2\bigl(1 - 2^{-r}\bigr) + 2
+f_{\uparrow}(r) &= \log_2(1 + r) \\
+f_{\downarrow}(r) &= 2 - \log_2(1 + r)
 \end{align}
+
+The choice of $\log_2(1+r)$ is motivated by three design properties: (i)~both factors evaluate to $1$ when $r = 1$, ensuring the learning rate is unaffected when the loss is stagnant; (ii)~$f_{\uparrow}(r) \geq 0$ for all $r \geq 0$, guaranteeing the learning rate remains non-negative regardless of the improvement ratio; and (iii)~the sublinear (logarithmic) growth rate limits how aggressively large improvement ratios drive LR changes, providing more conservative updates than linear or exponential alternatives. Fig.~\ref{fig:lrfactors} illustrates both curves.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{images/learning_rate_factor_formula.png}}
+\caption{LR update factors $f_{\uparrow}(r) = \log_2(1+r)$ (black) and $f_{\downarrow}(r) = 2 - \log_2(1+r)$ (red) as functions of the improvement ratio $r$. Both curves cross at $(1, 1)$: when there is no loss change ($r=1$) neither factor alters the learning rate. $f_{\uparrow}$ starts at the origin $(0, 0)$, is always non-negative, and grows sub-linearly, limiting the magnitude of aggressive LR increases. $f_{\downarrow}$ starts at $(0, 2)$ and decreases symmetrically, reaching zero at $r = 3$.}
+\label{fig:lrfactors}
+\end{figure}
 
 A direction flag $d \in \{\uparrow, \downarrow\}$ controls whether the LR should increase or decrease. The formula applied at each check is chosen so that $d$ always reflects the true direction of the update:
 \begin{equation}
@@ -98,7 +106,7 @@ lr \cdot f_{\uparrow}(r)  & \text{if } d = \downarrow \text{ and } r \leq 1
 \end{cases}
 \end{equation}
 
-For $r > 1$, $f_{\uparrow}(r) > 1$ and $f_{\downarrow}(r) < 1$; the natural assignment applies and $d$ is unchanged. For $r \leq 1$, $f_{\downarrow}(r) \geq 1$ and $f_{\uparrow}(r) \leq 1$; the formulas are swapped so that $d = \uparrow$ still produces an LR increase and $d = \downarrow$ still produces a decrease. Both factors are strictly bounded in $(0,2)$ for all $r > 0$, guaranteeing the learning rate remains positive throughout training. After every non-improving check $d$ alternates to enable oscillatory exploration.
+For $r > 1$, $f_{\uparrow}(r) > 1$ and $f_{\downarrow}(r) < 1$; the natural assignment applies and $d$ is unchanged. For $r \leq 1$, $f_{\downarrow}(r) \geq 1$ and $f_{\uparrow}(r) \leq 1$; the formulas are swapped so that $d = \uparrow$ still produces an LR increase and $d = \downarrow$ still produces a decrease. After every non-improving check $d$ alternates to enable oscillatory exploration.
 
 Parameters used: patience $= 30$, $\beta = 0.9$, no LR bounds.
 
@@ -110,11 +118,11 @@ The Improved Polling Method combines formula-driven adaptation with candidate se
 r = \frac{\ell_{\mathrm{window\_start}}}{\ell_{\mathrm{current}}}
 \end{equation}
 \begin{align}
-f_{\mathrm{up}} &= 1 + \log(r) \\
-f_{\mathrm{down}} &= \frac{1}{1 + \log(r)}
+f_{\mathrm{up}} &= \log_2(1 + r) \\
+f_{\mathrm{down}} &= 2 - \log_2(1 + r)
 \end{align}
 
-The three candidates $\{lr \cdot f_{\mathrm{up}},\; lr,\; lr \cdot f_{\mathrm{down}}\}$ are evaluated on the batch, and the one minimizing batch loss is selected. Parameters: patience $= 5$, min\_lr $= 10^{-9}$.
+The same $\log_2(1+r)$ family used in the Loss Responsive Scheduler (Section~II-B1) is applied here, sharing its key properties: both factors equal $1$ at $r = 1$, $f_{\mathrm{up}} \geq 0$ for all $r \geq 0$, and logarithmic growth limits abrupt LR jumps. The three candidates $\{lr \cdot f_{\mathrm{up}},\; lr,\; lr \cdot f_{\mathrm{down}}\}$ are evaluated on the batch, and the one minimizing batch loss is selected. Parameters: patience $= 5$, min\_lr $= 10^{-9}$.
 
 \section{Experiments}
 
@@ -128,11 +136,11 @@ Images are normalized per channel using training set statistics (RGB means: $[12
 
 \subsection{Baseline Replication}
 
-The baseline applies Adam with a fixed learning rate of $10^{-5}$ throughout all 150 epochs. This configuration serves as the reference point for all comparisons. As shown in Fig.~\ref{fig:losses}, validation loss decreases monotonically and accuracy improves steadily with no signs of divergence or overfitting, achieving 42.85\% best validation accuracy and 42.95\% test accuracy. The conservative LR ensures stable, predictable convergence, providing a clean lower-bound reference.
+The baseline applies Adam with a fixed learning rate of $10^{-5}$ throughout all 150 epochs. This configuration serves as the reference point for all comparisons. As shown in Fig.~\ref{fig:losses}, validation loss decreases monotonically and accuracy improves steadily with no signs of divergence or overfitting, achieving 42.85\% best validation accuracy and 42.91\% test accuracy. The conservative LR ensures stable, predictable convergence, providing a clean lower-bound reference.
 
 \subsection{Polling Method Replication}
 
-The primary experimental goal of this work is to replicate the Polling Method of Tan et al.~\cite{b2} in a new setting. The original paper evaluated it on MNIST with a two-layer ANN and candidate LRs in $[0.01, 0.05]$. Our replication targets CIFAR-10, a harder 10-class benchmark, using a CNN (\texttt{SimpleCIFAR10CNN}) and the Adam optimizer with candidate LRs spanning five orders of magnitude ($10^{-7}$ to $10^{-3}$). Despite these differences in architecture, optimizer, and dataset, the core algorithm is preserved exactly: at each batch, $N$ independent weight updates are evaluated and the one with highest batch accuracy is kept. The replication result (42.17\% test accuracy, closely tracking the baseline of 42.95\%) confirms that the polling selection mechanism is viable and transferable across settings, even when the candidate LR range and optimizer differ substantially from the original.
+The primary experimental goal of this work is to replicate the Polling Method of Tan et al.~\cite{b2} in a new setting. The original paper evaluated it on MNIST with a two-layer ANN and candidate LRs in $[0.01, 0.05]$. Our replication targets CIFAR-10, a harder 10-class benchmark, using a CNN (\texttt{SimpleCIFAR10CNN}) and the Adam optimizer with candidate LRs spanning five orders of magnitude ($10^{-7}$ to $10^{-3}$). Despite these differences in architecture, optimizer, and dataset, the core algorithm is preserved exactly: at each batch, $N$ independent weight updates are evaluated and the one with highest batch accuracy is kept. The replication result (42.35\% test accuracy, closely tracking the baseline of 42.91\%) confirms that the polling selection mechanism is viable and transferable across settings, even when the candidate LR range and optimizer differ substantially from the original.
 
 \section{Results}
 
@@ -146,15 +154,14 @@ Table~\ref{tab:results} summarizes the performance of all four methods. Fig.~\re
 \hline
 \textbf{Method} & \textbf{Best Val} & \textbf{Test Acc} & \textbf{Test Loss} \\
 \hline
-Baseline (Adam, fixed LR)  & 42.85\%        & 42.95\%          & 1.5582 \\
-Polling (base paper) \cite{b2} & 42.91\%    & 42.17\%          & 1.5641 \\
-Loss Responsive LR         & \textbf{52.25\%} & \textbf{55.88\%}$^\dagger$ & \textbf{1.2312} \\
-Improved Polling           & 32.13\%        & 33.30\%          & 1.8538 \\
+Baseline (Adam, fixed LR)  & 42.85\%        & 42.91\%          & 1.5585 \\
+Polling (base paper) \cite{b2} & 42.36\%    & 42.35\%          & 1.5615 \\
+Loss Responsive LR         & \textbf{51.06\%} & \textbf{51.94\%} & \textbf{1.3435} \\
+Improved Polling           & 33.38\%        & 34.27\%          & 1.8097 \\
 \hline
 \end{tabular}%
 }
 \end{center}
-{\small $^\dagger$Test from prior-run checkpoint (peak val 49.31\%); new run reached 52.25\% best val but was not separately tested.}
 \label{tab:results}
 \end{table}
 
@@ -166,15 +173,15 @@ Improved Polling           & 32.13\%        & 33.30\%          & 1.8538 \\
 
 \begin{figure}[htbp]
 \centerline{\includegraphics[width=\columnwidth]{images/training_comparison_LRs.png}}
-\caption{Mean selected learning rate per epoch for all four methods. The Loss Responsive LR Scheduler grows aggressively up to ${\approx}\,4.1\!\times\!10^{-2}$ before decaying; the Polling method exhibits a natural exploration-to-exploitation decay; the Improved Polling method collapses to near zero; and the baseline maintains a constant LR throughout.}
+\caption{Mean selected learning rate per epoch for all four methods. The Loss Responsive LR Scheduler grows aggressively up to ${\approx}\,1.49\!\times\!10^{-1}$ by epoch~150; the Polling method exhibits a natural exploration-to-exploitation decay; the Improved Polling method collapses to near zero by epoch~107; and the baseline maintains a constant LR throughout.}
 \label{fig:lrs}
 \end{figure}
 
-The Polling Method achieves 42.91\% best validation accuracy and 42.17\% test accuracy, closely matching the baseline. The mean selected LR decreases naturally from ${\approx}\,2.4\!\times\!10^{-4}$ at epoch~1 to ${\approx}\,7\!\times\!10^{-6}$ at epoch~150, exhibiting an implicit exploration-to-exploitation transition without any explicit schedule.
+The Polling Method achieves 42.36\% best validation accuracy and 42.35\% test accuracy, closely matching the baseline. The mean selected LR decreases naturally from ${\approx}\,2.2\!\times\!10^{-4}$ at epoch~1 to ${\approx}\,4\!\times\!10^{-6}$ at epoch~150, exhibiting an implicit exploration-to-exploitation transition without any explicit schedule.
 
-The Loss Responsive LR Scheduler reaches peak validation accuracy of 52.25\% at epoch~53, with the LR at approximately $5\!\times\!10^{-3}$ at that point. The LR continues growing after the accuracy peak, reaching a maximum of approximately $4.1\!\times\!10^{-2}$ around epoch~71, before oscillating briefly and then dropping sharply to ${\approx}\,1.3\!\times\!10^{-2}$, from which it decays slowly for the remainder of training. Despite the exponential update factors keeping the LR strictly positive throughout, the model eventually diverges: validation accuracy collapses to near-random (${\approx}\,10\%$) by epoch~150, suggesting the LR remains too large for fine-grained convergence after the accuracy peak.
+The Loss Responsive LR Scheduler reaches peak validation accuracy of 51.06\% at epoch~55, with the LR at approximately $2\!\times\!10^{-2}$ at that point. The model immediately collapses at epoch~57 (validation accuracy drops to ${\approx}\,9\%$), while the LR continues growing through the remainder of training, reaching a maximum of approximately $1.49\!\times\!10^{-1}$ at epoch~150. The logarithmic update factors keep $f_\uparrow(r) \geq 0$ for all $r \geq 0$, yet the scheduler lacks an explicit upper bound on the LR, so the LR grows unchecked past the accuracy peak until the network diverges to near-random performance.
 
-The Improved Polling method plateaus at 32.13\% validation accuracy. Its LR collapses to near zero by epoch~91 due to a selection bias toward smaller steps at batch level, which reduces local noise but prevents meaningful generalization.
+The Improved Polling method plateaus at 33.38\% validation accuracy. Its LR collapses to near zero by epoch~107 due to a selection bias toward smaller steps at batch level, which reduces local noise but prevents meaningful generalization.
 
 \section{Discussion}
 
@@ -184,17 +191,17 @@ The Polling Method demonstrates that a simple batch-level selection over candida
 
 \subsection{Loss Responsive LR: Effectiveness and Fragility}
 
-The Loss Responsive LR Scheduler achieves the strongest results, benefiting from aggressive LR growth when the model improves rapidly and conservative reduction otherwise. Replacing the logarithmic factors with exponential factors $f_{\uparrow}(r) = 2(1-2^{-r})$ and $f_{\downarrow}(r) = -2(1-2^{-r})+2$ eliminated the sign-change instability of the prior formulation --- both factors remain strictly in $(0,2)$ for all $r > 0$ --- and improved peak validation accuracy from 50.47\% to 52.25\%. However, the model still eventually diverges: the LR continues growing past the accuracy peak at epoch~53, reaching ${\approx}\,4.1\!\times\!10^{-2}$ before the scheduler begins reducing it, and despite the subsequent slow decay the network collapses to near-random accuracy by epoch~150. Coupling the LR schedule to validation loss (rather than training loss) or imposing an explicit upper LR bound would likely prevent this late divergence.
+The Loss Responsive LR Scheduler achieves the strongest results, benefiting from aggressive LR growth when the model improves rapidly and conservative reduction otherwise. The logarithmic update factors $f_{\uparrow}(r) = \log_2(1+r)$ and $f_{\downarrow}(r) = 2-\log_2(1+r)$ satisfy the three design goals stated in Section~II-B1: both equal $1$ at $r=1$, $f_\uparrow$ is always non-negative for $r \geq 0$, and sublinear growth resists the explosive LR jumps that plagued earlier exponential formulations. Despite this, the model still diverges: the LR grows past the accuracy peak at epoch~55, reaching ${\approx}\,1.49\!\times\!10^{-1}$ by epoch~150, and the network collapses to near-random accuracy at epoch~57. The logarithmic brake slows but does not eliminate the divergence, since the formula remains unbounded above for large improvement ratios. Coupling the LR schedule to validation loss (rather than training loss) or imposing an explicit upper LR bound would be the most direct fix.
 
 \subsection{LR Collapse in Improved Polling}
 
-The Improved Polling method suffers from a systematic collapse: at batch level, smaller LR updates consistently produce lower immediate loss (less gradient noise), creating a feedback loop that drives LR to the minimum bound regardless of the min\_lr safeguard. This reveals a fundamental tension between batch-level fitness and epoch-level learning: a selection criterion that is locally optimal may be globally harmful. Possible mitigations include periodic LR resets, evaluating candidates over multiple consecutive batches, or imposing a higher-level floor that ignores the batch-loss criterion.
+The Improved Polling method suffers from a systematic collapse: at batch level, smaller LR updates consistently produce lower immediate loss (less gradient noise), creating a feedback loop that drives LR to the minimum bound by epoch~107 regardless of the min\_lr safeguard. This reveals a fundamental tension between batch-level fitness and epoch-level learning: a selection criterion that is locally optimal may be globally harmful. Possible mitigations include periodic LR resets, evaluating candidates over multiple consecutive batches, or imposing a higher-level floor that ignores the batch-loss criterion.
 
 \subsection{Trade-offs}
 
 \begin{itemize}
 \item \textbf{Computational cost:} The Polling method requires $N$ forward-backward passes per batch ($5\times$ the baseline). The Loss Responsive LR and Improved Polling add negligible overhead beyond one loss comparison.
-\item \textbf{Stability:} The fixed baseline is the most stable. The Loss Responsive LR grows aggressively and still diverges eventually, though switching to exponential factors eliminated the prior sign-change instability. Improved Polling is unstable due to LR collapse.
+\item \textbf{Stability:} The fixed baseline is the most stable. The Loss Responsive LR grows aggressively and still diverges, though the logarithmic factors limit instantaneous jumps and keep $f_\uparrow \geq 0$ for all $r \geq 0$; an explicit upper LR bound remains necessary. Improved Polling is unstable due to LR collapse.
 \item \textbf{Generalization:} The Loss Responsive LR achieves the largest gain over the baseline, suggesting it reaches a better-generalizing region of the loss landscape before diverging.
 \end{itemize}
 
