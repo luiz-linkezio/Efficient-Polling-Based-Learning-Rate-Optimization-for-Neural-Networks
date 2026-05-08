@@ -141,6 +141,7 @@ Table~\ref{tab:results} summarizes the performance of all four methods. Fig.~\re
 \begin{table}[htbp]
 \caption{Performance Comparison Across Methods (150 Epochs)}
 \begin{center}
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{|l|c|c|c|}
 \hline
 \textbf{Method} & \textbf{Best Val} & \textbf{Test Acc} & \textbf{Test Loss} \\
@@ -150,10 +151,11 @@ Polling (base paper) \cite{b2} & 42.91\%    & 42.17\%          & 1.5641 \\
 Loss Responsive LR         & \textbf{52.25\%} & \textbf{55.88\%}$^\dagger$ & \textbf{1.2312} \\
 Improved Polling           & 32.13\%        & 33.30\%          & 1.8538 \\
 \hline
-\multicolumn{4}{l}{$^\dagger$Test from prior-run checkpoint (peak val 49.31\%); current run reached 52.25\% best val but was not separately tested.}
-\end{tabular}
-\label{tab:results}
+\end{tabular}%
+}
 \end{center}
+{\small $^\dagger$Test from prior-run checkpoint (peak val 49.31\%); new run reached 52.25\% best val but was not separately tested.}
+\label{tab:results}
 \end{table}
 
 \begin{figure}[htbp]
