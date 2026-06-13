@@ -30,11 +30,11 @@ jrss@cin.ufpe.br}
 \maketitle
 
 \begin{abstract}
-Selecting an appropriate learning rate is one of the most critical decisions in training neural networks effectively. This work has two objectives: (1) to replicate the Polling Method proposed by Tan et al. on the CIFAR-10 benchmark, adapting it from the original ANN setting to a convolutional neural network trained with Adam, and (2) to propose and evaluate two novel extensions --- a Loss Responsive Learning Rate Scheduler and an Improved Polling method --- against a fixed-rate Adam baseline over 150 epochs. The replicated Polling method matches the baseline at 41.90\% test accuracy without any explicit LR tuning, confirming its effectiveness as an adaptive strategy. The Loss Responsive LR Scheduler surpasses both, achieving 48.95\% best validation accuracy before diverging due to an excessively large learning rate. The Improved Polling method underperforms due to a learning rate collapse caused by selection bias toward smaller gradient steps. Our results reveal fundamental trade-offs between exploration-driven and formula-driven adaptive strategies and highlight open challenges in combining both paradigms.
+Selecting an appropriate learning rate is one of the most critical decisions in training neural networks effectively. This work has two objectives: (1) to replicate the Polling Method proposed by Tan et al.\ on the CIFAR-10 benchmark, adapting it from the original ANN setting to a convolutional neural network trained with SGD, and (2) to propose and evaluate a novel extension --- the Efficient Polling method --- against a fixed-rate SGD baseline over 150 epochs. The replicated Polling method dramatically surpasses the baseline, achieving 84.91\% best validation accuracy and 83.78\% test accuracy versus the baseline's 56.70\%, by autonomously selecting high learning rates early in training and transitioning to fine-grained steps near convergence. However, it pays a heavy price: every batch requires $N=5$ trial weight updates, more than tripling wall-clock training time. The proposed Efficient Polling method exploits the temporal stability of the selected learning rate by polling on demand: an exponential-backoff schedule doubles the interval between polls while the selection remains unchanged, and a two-tier divergence guard (spike-triggered polls and rollback to poll-point checkpoints) protects the unpolled steps. Efficient Polling matches the base method's accuracy (84.47\% best validation, 84.22\% test) while polling only 5\% of batches, reducing optimizer steps by 75\% and wall-clock time per epoch by $3.3\times$ --- only 12\% slower than plain SGD. Our results confirm that polling-based selection is highly effective at learning rate discovery when candidates span the optimal range, and demonstrate that nearly all of its cost can be eliminated without sacrificing accuracy or robustness.
 \end{abstract}
 
 \begin{IEEEkeywords}
-learning rate optimization, neural networks, polling method, CIFAR-10, adaptive learning rate, Adam optimizer
+learning rate optimization, neural networks, polling method, CIFAR-10, efficient training, SGD optimizer
 \end{IEEEkeywords}
 
 \section{Introduction}
@@ -43,7 +43,7 @@ The learning rate (LR) is arguably the most influential hyperparameter in gradie
 
 Existing approaches range from formula-based schedulers (step decay, cosine annealing, ReduceLROnPlateau) to optimizers with built-in per-parameter adaptation such as Adam \cite{b1} and RMSProp. A fundamentally different paradigm is \emph{polling optimization}, introduced in \cite{b2}: rather than computing a single LR-scaled update, multiple candidate learning rates are tested at each gradient step and the one that most improves performance on the current batch is selected. This exploration-based approach requires no hand-designed formula and adapts implicitly to the loss landscape.
 
-This work pursues two goals. First, we replicate the Polling Method on CIFAR-10, adapting it from the original ANN and MNIST setting to a convolutional neural network trained with Adam --- a setup that differs from the original in architecture, optimizer, and candidate LR range. Second, we propose two novel extensions (a Loss Responsive LR Scheduler and an Improved Polling method) and compare all four strategies against a fixed-rate Adam baseline. We report training dynamics, convergence speed, and generalization accuracy across 150 epochs.
+This work pursues two goals. First, we replicate the Polling Method on CIFAR-10, adapting it from the original ANN and MNIST setting to a convolutional neural network trained with SGD --- a setup that differs from the original in architecture and candidate LR range. Second, we address the method's main weakness --- its computational cost --- by proposing the Efficient Polling method, which polls on demand instead of at every batch, and we compare all three strategies against a fixed-rate SGD baseline. We report training dynamics, convergence speed, generalization accuracy, and computational cost across 150 epochs.
 
 \section{Proposed Solution}
 
@@ -62,67 +62,32 @@ k^{*} = \arg\max_{k} \; \mathrm{acc}(\hat{\theta}_{t,k},\, \mathcal{B}_t)
 \theta_{t+1} = \hat{\theta}_{t,k^{*}}
 \end{equation}
 
-where $\mathcal{B}_t$ is the current mini-batch. We use $\mathcal{C} = \{10^{-7},\, 10^{-6},\, 10^{-5},\, 10^{-4},\, 10^{-3}\}$ centered around the base LR $= 10^{-5}$. Note that Tan et al.\ originally used LRs in the range $[0.01, 0.05]$ with a simple ANN and SGD-like updates; our candidate set is adapted to the Adam optimizer and CNN setting.
+where $\mathcal{B}_t$ is the current mini-batch. We use $\mathcal{C} = \{10^{-5},\, 10^{-4},\, 10^{-3},\, 10^{-2},\, 10^{-1}\}$, spanning five orders of magnitude centered around the base LR $= 10^{-3}$. Note that Tan et al.\ originally used LRs in the range $[0.01, 0.05]$ with a simple ANN and SGD-like updates; our candidate set is adapted to the CNN setting and covers a wider range to allow the optimizer to discover the most suitable LR autonomously.
 
-\subsection{Proposed Extensions}
+\subsection{Proposed Extension: Efficient Polling}
 
-The following two methods are novel contributions of this work, extending the polling paradigm with formula-driven adaptation.
+The base Polling method performs $N$ trial weight updates at \emph{every} batch, yet its selection is highly redundant: within each phase of training, consecutive polls overwhelmingly choose the same learning rate. The Efficient Polling method keeps the selection mechanism of base Polling untouched but polls \emph{on demand}, combining an adaptive polling schedule with a divergence guard for the unpolled steps.
 
-\subsubsection{Loss Responsive LR Scheduler}
-
-The Loss Responsive LR Scheduler adjusts the learning rate based on how much the loss improves over a fixed patience window. An exponential moving average (EMA) smooths the loss signal to reduce stochasticity:
-
+\subsubsection{Adaptive polling schedule}
+Let $K$ be the current polling interval, in batches. A batch is polled when $K$ batches have elapsed since the last poll; all other batches perform a single standard SGD step using the last selected learning rate. After each poll, $K$ is updated by exponential backoff:
 \begin{equation}
-\ell_t^{\mathrm{ema}} = \beta \cdot \ell_{t-1}^{\mathrm{ema}} + (1-\beta) \cdot \ell_t, \quad \beta = 0.9
-\end{equation}
-
-Every \texttt{patience} steps the improvement ratio is computed as:
-\begin{equation}
-r = \frac{\ell_{\mathrm{ref}}}{\ell_t^{\mathrm{ema}}}
-\end{equation}
-
-Two logarithmic factors are defined, both evaluating to $1$ when $r = 1$:
-\begin{align}
-f_{\uparrow}(r) &= \log_2(1 + r) \\
-f_{\downarrow}(r) &= \frac{1}{\log_2(1 + r)}
-\end{align}
-
-Note that $f_{\downarrow}(r) = 1 / f_{\uparrow}(r)$: the two factors are exact multiplicative inverses. The choice of this pair is motivated by three design properties: (i)~both factors evaluate to $1$ when $r = 1$, ensuring the learning rate is unaffected when the loss is stagnant; (ii)~$f_{\downarrow}(r) > 0$ for all $r > 0$, guaranteeing the learning rate remains strictly positive and tends to zero asymptotically as $r \to \infty$; and (iii)~the sublinear (logarithmic) growth and decay rates limit how aggressively large improvement ratios drive LR changes, providing more conservative updates than linear or exponential alternatives. Fig.~\ref{fig:lrfactors} illustrates both curves.
-
-\begin{figure}[htbp]
-\centerline{\includegraphics[width=\columnwidth]{images/learning_rate_factor_formula.png}}
-\caption{LR update factors $f_{\uparrow}(r) = \log_2(1+r)$ (black) and $f_{\downarrow}(r) = 1/\log_2(1+r)$ (red) as functions of the improvement ratio $r$. Both curves cross at $(1, 1)$: when there is no loss change ($r=1$) neither factor alters the learning rate. $f_{\uparrow}$ grows sub-linearly, limiting the magnitude of aggressive LR increases. $f_{\downarrow} = 1/f_{\uparrow}$ is always strictly positive and tends asymptotically to zero, ensuring the learning rate can never become negative regardless of the improvement ratio.}
-\label{fig:lrfactors}
-\end{figure}
-
-A direction flag $d \in \{\uparrow, \downarrow\}$ controls whether the LR should increase or decrease. The formula applied at each check is chosen so that $d$ always reflects the true direction of the update:
-\begin{equation}
-lr \leftarrow
+K \leftarrow
 \begin{cases}
-lr \cdot f_{\uparrow}(r) & \text{if } d = \uparrow \text{ and } r > 1 \\
-lr \cdot f_{\downarrow}(r) & \text{if } d = \downarrow \text{ and } r > 1 \\
-lr \cdot f_{\downarrow}(r) & \text{if } d = \uparrow \text{ and } r \leq 1 \\
-lr \cdot f_{\uparrow}(r)  & \text{if } d = \downarrow \text{ and } r \leq 1
+\min(2K,\; K_{\max}) & \text{if } lr^{*} = lr^{*}_{\mathrm{prev}} \\
+1 & \text{otherwise}
 \end{cases}
+\label{eq:backoff}
 \end{equation}
+where $lr^{*}$ is the LR selected by the poll. A stable selection therefore decays the polling frequency geometrically (up to one poll every $K_{\max}$ batches), while any change in the selection immediately restores per-batch polling until the choice stabilizes again. Backoff only engages after the first poll in which candidate accuracies differ: at initialization all candidates tie on batch accuracy, and treating those ties as ``stable'' would stall training at the minimum candidate LR.
 
-For $r > 1$, $f_{\uparrow}(r) > 1$ and $f_{\downarrow}(r) < 1$; the natural assignment applies and $d$ is unchanged. For $r \leq 1$, $f_{\downarrow}(r) \geq 1$ and $f_{\uparrow}(r) \leq 1$; the formulas are swapped so that $d = \uparrow$ still produces an LR increase and $d = \downarrow$ still produces a decrease. After every non-improving check $d$ alternates to enable oscillatory exploration.
+\subsubsection{Divergence guard}
+Unlike base Polling, which evaluates every step before keeping it, Efficient Polling applies the steps between polls blindly. At a high learning rate, a single batch with a large gradient can then push the weights into divergence with no opportunity for the poll to reject the step. The guard exploits the pre-step batch loss $\ell_t$, which is already computed for the gradient, and operates at two tiers:
 
-Parameters used: patience $= 30$, $\beta = 0.9$, no LR bounds.
+\paragraph{Spike-triggered polls (prevention)} An exponential moving average of the batch loss, $\bar{\ell}_t = \beta\,\bar{\ell}_{t-1} + (1-\beta)\,\ell_t$, tracks the current loss level. If a batch arrives with $\ell_t > \gamma\,\bar{\ell}_{t-1}$, it is polled immediately regardless of the schedule, so that the accuracy criterion can reject an explosive step before it is applied.
 
-\subsubsection{Improved Polling Method}
+\paragraph{Rollback checkpoints (recovery)} The model and optimizer states stored by each poll double as a checkpoint of the last known-good weights. If $\ell_t$ is non-finite or exceeds an absolute threshold $\ell_{\mathrm{rb}} = 2\ln C$ (twice the cross-entropy loss of random guessing over $C$ classes), the weights are considered broken: the checkpoint is restored, the step is skipped, and polling resumes on the next batch. At most $K_{\max}$ batches of progress are lost.
 
-The Improved Polling Method combines formula-driven adaptation with candidate selection. Instead of $N$ fixed candidates, it derives two adaptive factors from the current loss improvement ratio and tests three candidates:
-
-\begin{equation}
-r = \frac{\ell_{\mathrm{window\_start}}}{\ell_{\mathrm{current}}}
-\end{equation}
-\begin{align}
-f_{\mathrm{up}} &= \log_2(1 + r) \\
-f_{\mathrm{down}} &= \frac{1}{\log_2(1 + r)}
-\end{align}
-
-The same reciprocal pair used in the Loss Responsive Scheduler (Section~II-B1) is applied here, sharing its key properties: both factors equal $1$ at $r = 1$, $f_{\mathrm{down}} > 0$ for all $r > 0$, and logarithmic growth and decay limit abrupt LR jumps. The three candidates $\{lr \cdot f_{\mathrm{up}},\; lr,\; lr \cdot f_{\mathrm{down}}\}$ are evaluated on the batch, and the one minimizing batch loss is selected. Parameters: patience $= 5$, min\_lr $= 10^{-9}$.
+Parameters: candidate set $\mathcal{C}$ identical to base Polling, $K_{\max} = 64$, $\gamma = 3$, $\beta = 0.9$, $\ell_{\mathrm{rb}} = 2\ln 10 \approx 4.61$, initial $lr = 10^{-3}$.
 
 \section{Experiments}
 
@@ -130,21 +95,21 @@ The same reciprocal pair used in the Loss Responsive Scheduler (Section~II-B1) i
 
 All experiments use CIFAR-10 \cite{b3}, consisting of 50{,}000 training and 10{,}000 test images across 10 classes ($32\!\times\!32$ RGB). The full implementation is publicly available in the project repository.\footnote{\url{https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks}} We reserve 10\% of training data for validation, yielding 45{,}000 training and 5{,}000 validation images.
 
-The model, \texttt{SimpleCIFAR10CNN}, is a lightweight CNN with the following structure: two convolutional blocks (64 and 128 channels, $3\!\times\!3$ kernels, ReLU activations, MaxPool downsampling), a third block of 256 channels followed by AdaptiveAvgPool$(1\!\times\!1)$, and a Linear$(256, 10)$ classification head.
+The model, \texttt{SimpleCIFAR10CNN}, is a five-layer CNN with the following structure: two blocks each consisting of two convolutional layers (64 and 128 channels, $3\!\times\!3$ kernels, ReLU activations, MaxPool downsampling), a third block with one 256-channel convolutional layer followed by AdaptiveAvgPool$(1\!\times\!1)$, and a Linear$(256, 10)$ classification head.
 
-Images are normalized per channel using training set statistics (RGB means: $[125.31,\, 122.95,\, 113.87]$; stds: $[62.99,\, 62.09,\, 66.70]$). All methods use Adam \cite{b1} as the base optimizer with weight decay $5\!\times\!10^{-4}$, batch size 2048, and 150 epochs.
+Images are normalized per channel using training set statistics (RGB means: $[125.31,\, 122.95,\, 113.87]$; stds: $[62.99,\, 62.09,\, 66.70]$). All methods use vanilla SGD (no momentum, no weight decay) as the base optimizer with batch size 64 and 150 epochs. The base learning rate is $10^{-3}$ for all methods. Wall-clock timings were measured on a single NVIDIA GeForce RTX 5070 (12\,GB) with no other GPU workload.
 
 \subsection{Baseline Replication}
 
-The baseline applies Adam with a fixed learning rate of $10^{-5}$ throughout all 150 epochs. This configuration serves as the reference point for all comparisons. As shown in Fig.~\ref{fig:losses}, validation loss decreases monotonically and accuracy improves steadily with no signs of divergence or overfitting, achieving 42.92\% best validation accuracy and 42.96\% test accuracy. The conservative LR ensures stable, predictable convergence, providing a clean lower-bound reference.
+The baseline applies SGD with a fixed learning rate of $10^{-3}$ throughout all 150 epochs. As shown in Fig.~\ref{fig:losses}, validation loss decreases monotonically and accuracy improves steadily, achieving 57.34\% best validation accuracy and 56.70\% test accuracy. The conservative fixed LR ensures stable, predictable convergence and provides a clean reference point.
 
 \subsection{Polling Method Replication}
 
-The primary experimental goal of this work is to replicate the Polling Method of Tan et al.~\cite{b2} in a new setting. The original paper evaluated it on MNIST with a two-layer ANN and candidate LRs in $[0.01, 0.05]$. Our replication targets CIFAR-10, a harder 10-class benchmark, using a CNN (\texttt{SimpleCIFAR10CNN}) and the Adam optimizer with candidate LRs spanning five orders of magnitude ($10^{-7}$ to $10^{-3}$). Despite these differences in architecture, optimizer, and dataset, the core algorithm is preserved exactly: at each batch, $N$ independent weight updates are evaluated and the one with highest batch accuracy is kept. The replication result (41.90\% test accuracy, closely tracking the baseline of 42.96\%) confirms that the polling selection mechanism is viable and transferable across settings, even when the candidate LR range and optimizer differ substantially from the original.
+The primary experimental goal of this work is to replicate the Polling Method of Tan et al.~\cite{b2} in a new setting. The original paper evaluated it on MNIST with a two-layer ANN and candidate LRs in $[0.01, 0.05]$. Our replication targets CIFAR-10, a harder 10-class benchmark, using a CNN (\texttt{SimpleCIFAR10CNN}) and vanilla SGD with candidate LRs spanning five orders of magnitude ($10^{-5}$ to $10^{-1}$). Despite differences in architecture, dataset, and candidate LR range, the core algorithm is preserved exactly: at each batch, $N$ independent weight updates are evaluated and the one with highest batch accuracy is kept. The replication result (84.91\% best validation accuracy, 83.78\% test accuracy) demonstrates that the polling selection mechanism successfully discovers a two-phase LR schedule entirely from batch-level feedback, without any prior knowledge of the optimal rate.
 
 \section{Results}
 
-Table~\ref{tab:results} summarizes the performance of all four methods. Fig.~\ref{fig:losses} shows training and validation loss curves and Fig.~\ref{fig:lrs} shows the learning rate trajectories across all 150 epochs.
+Table~\ref{tab:results} summarizes the performance of all three methods and Table~\ref{tab:cost} their computational cost. Fig.~\ref{fig:losses} shows training and validation loss curves and Fig.~\ref{fig:lrs} shows the learning rate trajectories across all 150 epochs.
 
 \begin{table}[htbp]
 \caption{Performance Comparison Across Methods (150 Epochs)}
@@ -154,10 +119,9 @@ Table~\ref{tab:results} summarizes the performance of all four methods. Fig.~\re
 \hline
 \textbf{Method} & \textbf{Best Val} & \textbf{Test Acc} & \textbf{Test Loss} \\
 \hline
-Baseline  & 42.92\%        & 42.96\%          & 1.5584 \\
-Polling (base paper) \cite{b2} & 42.87\%    & 41.90\%          & 1.5686 \\
-Loss Responsive LR         & \textbf{48.95\%} & \textbf{49.17\%} & \textbf{1.4169} \\
-Improved Polling           & 33.43\%        & 34.33\%          & 1.8060 \\
+Baseline                     & 57.34\%          & 56.70\%          & 1.2153 \\
+Polling (base paper) \cite{b2} & \textbf{84.91\%} & 83.78\% & 0.7075 \\
+\textbf{Efficient Polling}   & 84.47\%          & \textbf{84.22\%} & 0.7188 \\
 \hline
 \end{tabular}%
 }
@@ -165,55 +129,59 @@ Improved Polling           & 33.43\%        & 34.33\%          & 1.8060 \\
 \label{tab:results}
 \end{table}
 
+\begin{table}[htbp]
+\caption{Computational Cost (150 Epochs, 105{,}600 Batches)}
+\begin{center}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Method} & \textbf{Polled Batches} & \textbf{Optimizer Steps} & \textbf{s/Epoch} \\
+\hline
+Baseline          & ---            & 105{,}600          & 2.50 \\
+Polling (base paper) \cite{b2} & 100\%  & 528{,}000          & 9.10 \\
+\textbf{Efficient Polling} & \textbf{5.0\%} & \textbf{132{,}145} & \textbf{2.79} \\
+\hline
+\end{tabular}%
+}
+\end{center}
+\label{tab:cost}
+\end{table}
+
 \begin{figure}[htbp]
 \centerline{\includegraphics[width=\columnwidth]{images/training_comparison_losses.png}}
-\caption{Training and validation loss over 150 epochs for all four methods. The Loss Responsive LR Scheduler reaches the lowest validation loss (epoch~50) before diverging at epoch~51, the Polling method closely tracks the Adam baseline, and the Improved Polling method exhibits persistently higher loss due to learning rate collapse.}
+\caption{Training and validation loss over 150 epochs for all three methods. Both the Polling and Efficient Polling methods converge rapidly and achieve low validation loss, significantly outperforming the baseline. Efficient Polling closely tracks the base method's trajectory despite polling only 5\% of batches. The baseline converges slowly under the fixed conservative LR.}
 \label{fig:losses}
 \end{figure}
 
 \begin{figure}[htbp]
 \centerline{\includegraphics[width=\columnwidth]{images/training_comparison_LRs.png}}
-\caption{Mean selected learning rate per epoch for all four methods. The Loss Responsive LR Scheduler grows to ${\approx}\,5.2\!\times\!10^{-3}$ at epoch~50, then self-stabilizes at ${\approx}\,2.5\!\times\!10^{-2}$ via direction oscillations; the Polling method exhibits a natural exploration-to-exploitation decay; the Improved Polling method collapses to near zero by epoch~107; and the baseline maintains a constant LR throughout.}
+\caption{Mean selected learning rate per epoch for all three methods (symlog scale). The Polling method autonomously selects the highest candidate (${\approx}\,10^{-1}$) for the first ${\approx}\,38$ epochs, then transitions abruptly to the smallest candidate (${\approx}\,10^{-5}$) as the model converges. Efficient Polling recovers the same two-phase schedule --- high LR until ${\approx}$ epoch 30, annealing to $10^{-5}$ by ${\approx}$ epoch 75 --- while polling only a small fraction of batches. The baseline remains constant at $10^{-3}$.}
 \label{fig:lrs}
 \end{figure}
 
-The Polling Method achieves 42.87\% best validation accuracy and 41.90\% test accuracy, closely matching the baseline. The mean selected LR decreases naturally from ${\approx}\,2.2\!\times\!10^{-4}$ at epoch~1 to ${\approx}\,4\!\times\!10^{-6}$ at epoch~150, exhibiting an implicit exploration-to-exploitation transition without any explicit schedule.
+The Polling Method achieves 84.91\% best validation accuracy and 83.78\% test accuracy, outperforming the baseline by ${\approx}\,27$ percentage points. As shown in Fig.~\ref{fig:lrs}, the mean selected LR rapidly converges to ${\approx}\,10^{-1}$ and remains there through the first ${\approx}\,38$ epochs, enabling rapid loss reduction visible in Fig.~\ref{fig:losses}. After this aggressive exploration phase, the selected LR collapses to the smallest candidate (${\approx}\,10^{-5}$), facilitating fine-grained refinement near convergence.
 
-The Loss Responsive LR Scheduler reaches peak validation accuracy of 48.95\% at epoch~50, with the LR at approximately $5.2\!\times\!10^{-3}$ at that point. The model collapses at epoch~51 (validation accuracy drops to ${\approx}\,30\%$ and does not recover), while the LR continues growing before self-stabilizing at approximately $2.5\!\times\!10^{-2}$. The reciprocal update pair $f_\downarrow = 1/f_\uparrow$ prevents the LR from becoming negative and bounds its growth via the oscillation between directions, yet the scheduler still lacks an explicit upper bound, so the LR exceeds the stability threshold before the oscillatory regime is reached.
-
-The Improved Polling method plateaus at 33.43\% validation accuracy. Its LR collapses to near zero by epoch~107 due to a selection bias toward smaller steps at batch level, which reduces local noise but prevents meaningful generalization.
+The Efficient Polling method achieves 84.47\% best validation accuracy and 84.22\% test accuracy --- matching the base Polling method on validation (within 0.5 pp) and slightly exceeding it on test --- while polling only 5{,}309 of 105{,}600 batches (5.0\%). As shown in Fig.~\ref{fig:lrs}, it recovers the same two-phase schedule as base Polling: the highest candidate dominates the first ${\approx}\,30$ epochs, after which the selection anneals to the smallest candidate. As summarized in Table~\ref{tab:cost}, the on-demand schedule reduces total optimizer steps from 528{,}000 to 132{,}145 (75\% fewer) and wall-clock time from 9.10 to 2.79\,s per epoch ($3.3\times$ faster), only 12\% above plain SGD. The divergence guard was active but cheap: 314 spike-triggered polls (0.3\% of batches) sufficed to keep the run healthy, and no rollback was ever needed. Its necessity is demonstrated by an unguarded preliminary run, in which a single blind step at $lr = 10^{-1}$ around epoch 33 pushed the weights into numerical divergence (NaN loss), from which the unguarded method could not recover for the remaining 117 epochs.
 
 \section{Discussion}
 
-\subsection{Polling as Implicit Adaptation}
+\subsection{Polling as Effective LR Discovery}
 
-The Polling Method demonstrates that a simple batch-level selection over candidate learning rates can match a well-tuned Adam baseline without any prior knowledge of the optimal LR. The natural decay of the mean selected LR from $10^{-4}$ in early epochs to $10^{-5}$ later mirrors the behavior of warm-up schedules, confirming that the loss landscape inherently favors larger exploratory steps in early training and finer steps near convergence.
+The Polling Method's dramatic improvement over the baseline (83.78\% vs.\ 56.70\% test accuracy) demonstrates that batch-level LR selection can autonomously discover a near-optimal two-phase schedule. In the first ${\approx}\,38$ epochs, the method consistently selects the highest candidate LR ($10^{-1}$), driving rapid loss reduction that the fixed-baseline SGD ($10^{-3}$) cannot match. The subsequent transition to the smallest candidate ($10^{-5}$) mirrors classical warm-up-then-decay schedules, but is derived entirely from batch accuracy feedback without any prior knowledge. This confirms that the optimal LR for vanilla SGD on CIFAR-10 lies far above the conservative value ($10^{-3}$) that would typically be chosen as a fixed rate, and that polling's candidate set must span the optimal region for the method to succeed.
 
-\subsection{Loss Responsive LR: Effectiveness and Fragility}
+\subsection{Efficient Polling: Same Schedule at a Fraction of the Cost}
 
-The Loss Responsive LR Scheduler achieves the strongest results, benefiting from aggressive LR growth when the model improves rapidly and conservative reduction otherwise. The reciprocal factor pair $f_{\uparrow}(r) = \log_2(1+r)$ and $f_{\downarrow}(r) = 1/\log_2(1+r)$ satisfy the three design goals stated in Section~II-B1: both equal $1$ at $r=1$, $f_\downarrow$ is always strictly positive for $r > 0$ and tends to zero as $r \to \infty$, and sublinear growth and decay resist explosive LR jumps. Compared to the previous formulation $2-\log_2(1+r)$, the new $f_\downarrow$ also prevents the learning rate from ever becoming negative at large improvement ratios. Despite these properties, the model still diverges: the LR grows to ${\approx}\,5.2\!\times\!10^{-3}$ by epoch~50 before the network collapses, and subsequently self-stabilizes at approximately $2.5\!\times\!10^{-2}$ through direction oscillations --- a qualitatively better outcome than the unbounded growth seen with the prior formula. Coupling the LR schedule to validation loss (rather than training loss) or imposing an explicit upper LR bound would be the most direct fix.
+The Efficient Polling results show that the value of polling lies in \emph{when the selection changes}, not in the selection itself being repeated at every batch. Within each phase of training the poll outcome is essentially constant --- the highest candidate during exploration, the smallest near convergence --- so the exponential backoff quickly settles at the maximum interval and the method degenerates into plain SGD at the discovered rate. Per-batch polling resumes automatically and only where it matters: during the phase transition, when consecutive polls disagree and the interval collapses back to one. This adaptivity is what allows 5\% of the polls to recover the full two-phase schedule, matching base Polling's accuracy at near-SGD cost.
 
-\subsection{LR Collapse in Improved Polling}
-
-The Improved Polling method suffers from a systematic collapse: at batch level, smaller LR updates consistently produce lower immediate loss (less gradient noise), creating a feedback loop that drives LR to the minimum bound by epoch~107 regardless of the min\_lr safeguard. The 33.43\% best validation accuracy and 34.33\% test accuracy confirm that this collapse is not an artifact of the formula choice but a structural issue with batch-level selection. This reveals a fundamental tension between batch-level fitness and epoch-level learning: a selection criterion that is locally optimal may be globally harmful. Possible mitigations include periodic LR resets, evaluating candidates over multiple consecutive batches, or imposing a higher-level floor that ignores the batch-loss criterion.
+The divergence guard addresses the one genuine risk introduced by skipping polls. Base Polling implicitly validates every step before keeping it, so an explosive step at $lr = 10^{-1}$ is simply not selected; blind steps between polls have no such protection, and our unguarded preliminary run demonstrates that a single such step can irrecoverably destroy training. The guard restores the missing protection at negligible cost by reusing quantities the method already computes: the pre-step batch loss (for spike detection) and the poll-point state snapshots (as rollback checkpoints). Notably, the preventive tier alone was sufficient in practice --- polling suspicious batches before stepping meant the recovery tier was never triggered in the guarded runs.
 
 \subsection{Trade-offs}
 
 \begin{itemize}
-\item \textbf{Computational cost:} The Polling method requires $N$ forward-backward passes per batch ($5\times$ the baseline). The Loss Responsive LR and Improved Polling add negligible overhead beyond one loss comparison.
-\item \textbf{Stability:} The fixed baseline is the most stable. The Loss Responsive LR grows aggressively and still diverges, though the logarithmic factors limit instantaneous jumps and keep $f_\uparrow \geq 0$ for all $r \geq 0$; an explicit upper LR bound remains necessary. Improved Polling is unstable due to LR collapse.
-\item \textbf{Generalization:} The Loss Responsive LR achieves the largest gain over the baseline, suggesting it reaches a better-generalizing region of the loss landscape before diverging.
+\item \textbf{Computational cost:} Base Polling requires $N = 5$ trial updates per batch, raising wall-clock time per epoch by $3.6\times$ over plain SGD. Efficient Polling reduces this overhead to 12\% over plain SGD (Table~\ref{tab:cost}) while preserving accuracy, making polling practical for routine use.
+\item \textbf{Stability:} The fixed baseline is the most predictable. Base Polling is intrinsically safe because every step is validated before being kept. Efficient Polling trades this per-step validation for speed and recovers safety through its two-tier guard; without the guard, blind high-LR steps can diverge irrecoverably, as observed empirically.
+\item \textbf{Generalization:} Both polling-based methods generalize well (test accuracies within 1 pp of their validation best), confirming that the polling selection criterion does not induce overfitting when applied per batch. The critical factor is ensuring the candidate set spans LR values near the true optimum for the given architecture and dataset.
+\item \textbf{Hyperparameters:} Efficient Polling introduces four constants ($K_{\max}$, $\gamma$, $\beta$, $\ell_{\mathrm{rb}}$). None required tuning in our experiments: they encode scale-free heuristics (geometric backoff, relative loss spikes, random-guess loss) rather than problem-specific magnitudes.
 \end{itemize}
-
-\section*{Acknowledgment}
-
-The authors thank the course instructor for guidance and feedback throughout this project.
-
-\begin{thebibliography}{00}
-\bibitem{b1} D. P. Kingma and J. Ba, ``Adam: A method for stochastic optimization,'' \textit{arXiv preprint arXiv:1412.6980}, 2014.
-\bibitem{b2} C. Y. Tan, W. K. Choong, and C. K. Lau, ``Expediting convergence via polling optimisation for gradient descent in neural networks,'' 2026.
-\bibitem{b3} A. Krizhevsky, ``Learning multiple layers of features from tiny images,'' University of Toronto, Tech. Rep., 2009.
-\bibitem{b4} L. H. B. A. da Silva and J. R. S. Silva, ``Efficient polling-based learning rate optimization for neural networks,'' GitHub, 2026. [Online]. Available: \url{https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks}
-\end{thebibliography}
 
 \end{document}
