@@ -1,0 +1,301 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage[hyphens]{url}
+\usepackage[brazil]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\begin{document}
+
+\title{Otimização Eficiente da Taxa de Aprendizado por Votação (Polling) para Redes Neurais}
+
+\author{
+\IEEEauthorblockN{Luiz Henrique}
+\IEEEauthorblockA{\textit{} \\
+\textit{Universidade Federal de Pernambuco} \\
+Recife, Brasil \\
+lhbas@cin.ufpe.br}
+\and
+\IEEEauthorblockN{Jos\'{e} Ronaldo}
+\IEEEauthorblockA{\textit{} \\
+\textit{Universidade Federal de Pernambuco} \\
+Recife, Brasil \\
+jrss@cin.ufpe.br}
+}
+
+\maketitle
+
+\begin{abstract}
+A seleção de uma taxa de aprendizado adequada é uma das decisões mais críticas para treinar redes neurais de forma eficaz. Este trabalho tem dois objetivos: (1) replicar o Método de Votação (Polling) proposto por Tan et al.\ no benchmark CIFAR-10, adaptando-o do cenário original de redes neurais artificiais (ANN) para uma rede neural convolucional treinada com SGD, e (2) propor e avaliar uma nova extensão --- o método de Votação Eficiente (Efficient Polling) --- em comparação com uma linha de base SGD de taxa fixa ao longo de 150 épocas. O método de Votação replicado supera drasticamente a linha de base, atingindo 84,65\% de melhor acurácia de validação e 83,99\% de acurácia de teste contra 56,70\% da linha de base, ao selecionar autonomamente taxas de aprendizado altas no início do treinamento e fazer a transição para passos refinados próximo da convergência. No entanto, ele paga um preço alto: cada lote (batch) requer $N=5$ atualizações de peso experimentais, mais do que triplicando o tempo total de treinamento. O método de Votação Eficiente proposto explora a estabilidade temporal da taxa de aprendizado selecionada ao votar sob demanda: um agendamento de recuo exponencial (exponential backoff) dobra o intervalo entre votações enquanto a seleção permanece inalterada, e um mecanismo de proteção contra divergência em dois níveis (votações disparadas por picos e reversão para checkpoints dos pontos de votação) protege os passos não votados. A Votação Eficiente iguala a acurácia do método base (85,07\% de melhor validação, 83,93\% de teste, dentro de 0,1 pp) enquanto vota apenas 5\% dos lotes, reduzindo os passos do otimizador em 75\% e o tempo total por época em $3,3\times$ --- apenas 12\% mais lento que o SGD puro. Nossos resultados confirmam que a seleção baseada em votação é altamente eficaz na descoberta da taxa de aprendizado quando os candidatos cobrem a faixa ótima, e demonstram que quase todo o seu custo pode ser eliminado sem sacrificar acurácia ou robustez.
+\end{abstract}
+
+\begin{IEEEkeywords}
+otimização da taxa de aprendizado, redes neurais, método de votação, CIFAR-10, treinamento eficiente, otimizador SGD
+\end{IEEEkeywords}
+
+\section{Introdução}
+
+A taxa de aprendizado (LR, do inglês \emph{learning rate}) é, possivelmente, o hiperparâmetro mais influente no treinamento baseado em gradiente de redes neurais. Uma taxa grande demais causa divergência ou oscilação próximo dos ótimos, enquanto uma taxa pequena demais leva a convergência lenta ou aprisionamento em mínimos locais ruins. Taxas de aprendizado fixas exigem conhecimento especializado ou busca em grade (grid search) custosa, o que motiva o desenvolvimento de estratégias adaptativas.
+
+As abordagens existentes vão desde agendadores baseados em fórmulas (decaimento em degraus, recozimento por cosseno, ReduceLROnPlateau) até otimizadores com adaptação por parâmetro embutida, como Adam e RMSProp. Um paradigma fundamentalmente diferente é a \emph{otimização por votação} (polling optimization), introduzida por Tan et al.: em vez de calcular uma única atualização escalada pela LR, múltiplas taxas de aprendizado candidatas são testadas a cada passo de gradiente, e a que mais melhora o desempenho no lote atual é selecionada. Essa abordagem baseada em exploração não requer nenhuma fórmula projetada manualmente e se adapta implicitamente ao relevo da função de perda.
+
+Este trabalho persegue dois objetivos. Primeiro, replicamos o Método de Votação no CIFAR-10, adaptando-o do cenário original de ANN e MNIST para uma rede neural convolucional treinada com SGD --- uma configuração que difere da original em arquitetura e na faixa de LRs candidatas. Segundo, abordamos a principal fraqueza do método --- seu custo computacional --- ao propor o método de Votação Eficiente, que vota sob demanda em vez de a cada lote, e comparamos as três estratégias com uma linha de base SGD de taxa fixa. Reportamos a dinâmica de treinamento, a velocidade de convergência, a acurácia de generalização e o custo computacional ao longo de 150 épocas.
+
+\section{Solução Proposta}
+
+\subsection{Fundamentação: Exploração vs.\ Aproveitamento}
+
+Métodos adaptativos de taxa de aprendizado são comumente formulados como um equilíbrio entre dois objetivos opostos. O \emph{aproveitamento} (exploitation) faz ajustes cautelosos e limitados por fórmula para convergir eficientemente em direção a um mínimo próximo; a \emph{exploração} (exploration) faz mudanças maiores e deliberadas para escapar de mínimos locais ruins. Tan et al.\ argumentam que os otimizadores dominantes --- SGD, RMSProp e Adam --- são primariamente orientados ao aproveitamento: eles atenuam a taxa de aprendizado por meio de funções heurísticas fixas e acumulam histórico de gradiente por meio de médias móveis, o que tanto limita sua adaptabilidade quanto injeta ruído capaz de obscurecer o gradiente verdadeiro. Agendamentos cíclicos e de reinício a quente (warm restart) adicionam exploração, mas ainda dentro de uma forma funcional predefinida, de modo que a taxa de aprendizado nunca pode sair do que aquela forma permite.
+
+O Método de Votação foi introduzido para injetar exploração em um treinamento que de outro modo é baseado em aproveitamento, sem depender de qualquer fórmula desse tipo. Em vez de calcular uma única atualização escalada pela taxa de aprendizado, ele instancia um ensemble de $n$ \emph{modelos base} a partir dos mesmos pesos, cada um avançado por uma taxa de aprendizado candidata diferente $\alpha_1, \ldots, \alpha_n$. Cada modelo base é avaliado contra os rótulos de treinamento, e o candidato que produz o modelo de maior acurácia é selecionado; seus pesos tornam-se o ponto de partida para a próxima iteração, e o procedimento se repete. Como a escolha é guiada por desempenho medido em vez de um agendamento, o método pode aumentar a taxa de aprendizado de forma agressiva quando isso ajuda e reduzi-la quando não, explorando o espaço da taxa de aprendizado de forma contínua e eliminando qualquer dependência de gradientes passados. Tan et al.\ validaram o método com o otimizador Adam em Redes Neurais Artificiais e em uma tarefa de inferência variacional bayesiana, reportando uma redução de 50\% no erro absoluto em relação ao Adam isolado. Nosso trabalho isola esse mecanismo de seleção sobre o SGD puro --- removendo a adaptação por parâmetro do Adam de modo que a taxa de aprendizado votada seja o único componente adaptativo --- e move a granularidade da seleção para o nível do mini-lote, conforme detalhado a seguir.
+
+\subsection{Método Replicado: Votação}
+
+O Método de Votação, proposto por Tan et al., substitui o passo de gradiente padrão de LR única por um procedimento de seleção por ensemble. A cada lote de treinamento, após o cálculo dos gradientes, $N$ taxas de aprendizado candidatas são aplicadas independentemente, e os pesos do modelo que atingem a maior acurácia no lote são mantidos.
+
+Seja $\mathcal{C} = \{lr_1, \ldots, lr_N\}$ o conjunto de candidatos. No lote $t$, dados os pesos $\theta_t$ e os gradientes $g_t$:
+\begin{equation}
+\hat{\theta}_{t,k} = \theta_t - lr_k \cdot g_t, \quad k = 1,\ldots,N
+\end{equation}
+\begin{equation}
+k^{*} = \arg\max_{k} \; \mathrm{acc}(\hat{\theta}_{t,k},\, \mathcal{B}_t)
+\end{equation}
+\begin{equation}
+\theta_{t+1} = \hat{\theta}_{t,k^{*}}
+\end{equation}
+
+onde $\mathcal{B}_t$ é o mini-lote atual. Usamos $\mathcal{C} = \{10^{-5},\, 10^{-4},\, 10^{-3},\, 10^{-2},\, 10^{-1}\}$, abrangendo cinco ordens de magnitude centradas na LR base $= 10^{-3}$. Observe que Tan et al.\ originalmente usaram LRs na faixa $[0{,}01, 0{,}05]$ com uma ANN simples e atualizações semelhantes ao SGD; nosso conjunto de candidatos é adaptado ao cenário de CNN e cobre uma faixa mais ampla para permitir que o otimizador descubra a LR mais adequada de forma autônoma.
+
+O Algoritmo~\ref{alg:polling} apresenta o procedimento por lote. A seleção requer $N$ atualizações de peso experimentais avaliadas a partir do mesmo instantâneo (snapshot) $(\theta_t, g_t)$; o candidato vencedor é mantido diretamente, de modo que não é necessário um passo de reaplicação. Empates na acurácia do lote são desfeitos em favor da menor LR candidata, correspondendo ao comportamento conservador do método original.
+
+\begin{algorithm}[htbp]
+\caption{Passo de Votação (método base, um lote)}
+\label{alg:polling}
+\begin{algorithmic}[1]
+\REQUIRE pesos $\theta$, lote $\mathcal{B}$, conjunto de candidatos $\mathcal{C}$, perda $L$
+\STATE $g \leftarrow \nabla_\theta L(\theta; \mathcal{B})$ \COMMENT{gradiente no ponto atual}
+\FOR{cada $lr_k \in \mathcal{C}$}
+    \STATE $\hat{\theta}_k \leftarrow \theta - lr_k \cdot g$ \COMMENT{passo experimental a partir do snapshot}
+    \STATE $a_k \leftarrow \mathrm{acc}(\hat{\theta}_k, \mathcal{B})$
+\ENDFOR
+\STATE $k^{*} \leftarrow \arg\max_k a_k$ \COMMENT{empates favorecem o menor $lr$}
+\STATE $\theta \leftarrow \hat{\theta}_{k^{*}}$
+\STATE \textbf{retorne} pesos atualizados $\theta$, $lr^{*} = lr_{k^{*}}$ selecionado
+\end{algorithmic}
+\end{algorithm}
+
+Na prática, as $N$ atualizações experimentais da linha~3 são realizadas copiando profundamente (deep-copy) os estados do modelo e do otimizador uma vez, e então, para cada candidato, recarregando esse snapshot, sobrescrevendo a taxa de aprendizado do otimizador e dando um único passo do otimizador. Recarregar o estado do otimizador junto com os pesos garante que cada candidato parta da condição pré-passo idêntica; para o SGD puro sem momento, o otimizador não carrega estado algum, de modo que a restauração é exata e a seleção é determinada puramente pela taxa de aprendizado candidata. O critério de seleção é a acurácia de classificação por lote dos pesos resultantes sobre o mesmo mini-lote $\mathcal{B}_t$ que produziu o gradiente, avaliada sob \texttt{torch.no\_grad}; a entropia cruzada é a perda de treinamento, mas a acurácia é o sinal de seleção, correspondendo ao uso de acurácia do modelo base no método original. Esse procedimento de snapshot e restauração é compartilhado literalmente pela Votação Eficiente, onde o snapshot tomado a cada votação é adicionalmente retido como o checkpoint de reversão usado pelo mecanismo de proteção contra divergência.
+
+\subsection{Extensão Proposta: Votação Eficiente}
+
+O método base de Votação realiza $N$ atualizações de peso experimentais a \emph{cada} lote, mas sua seleção é altamente redundante: dentro de cada fase do treinamento, votações consecutivas escolhem esmagadoramente a mesma taxa de aprendizado. O método de Votação Eficiente mantém o mecanismo de seleção da Votação base intocado, mas vota \emph{sob demanda}, combinando um agendamento adaptativo de votação com um mecanismo de proteção contra divergência para os passos não votados.
+
+\subsubsection{Agendamento adaptativo de votação}
+Seja $K$ o intervalo de votação atual, em lotes. Um lote é votado quando $K$ lotes se passaram desde a última votação; todos os outros lotes realizam um único passo SGD padrão usando a última taxa de aprendizado selecionada. Após cada votação, $K$ é atualizado por recuo exponencial:
+\begin{equation}
+K \leftarrow
+\begin{cases}
+\min(2K,\; K_{\max}) & \text{se } lr^{*} = lr^{*}_{\mathrm{prev}} \\
+1 & \text{caso contrário}
+\end{cases}
+\label{eq:backoff}
+\end{equation}
+onde $lr^{*}$ é a LR selecionada pela votação. Uma seleção estável, portanto, decai a frequência de votação geometricamente (até uma votação a cada $K_{\max}$ lotes), enquanto qualquer mudança na seleção restaura imediatamente a votação por lote até que a escolha se estabilize novamente. O recuo só é acionado após a primeira votação em que as acurácias dos candidatos diferem: na inicialização, todos os candidatos empatam na acurácia do lote, e tratar esses empates como ``estáveis'' faria o treinamento estagnar na LR candidata mínima.
+
+\subsubsection{Mecanismo de proteção contra divergência}
+Diferentemente da Votação base, que avalia cada passo antes de mantê-lo, a Votação Eficiente aplica os passos entre votações às cegas. Com uma taxa de aprendizado alta, um único lote com um gradiente grande pode então empurrar os pesos para a divergência sem nenhuma oportunidade de a votação rejeitar o passo. O mecanismo de proteção explora a perda do lote pré-passo $\ell_t$, que já é computada para o gradiente, e opera em dois níveis:
+
+\paragraph{Votações disparadas por picos (prevenção)} Uma média móvel exponencial da perda do lote, $\bar{\ell}_t = \beta\,\bar{\ell}_{t-1} + (1-\beta)\,\ell_t$, acompanha o nível atual da perda. Se um lote chega com $\ell_t > \gamma\,\bar{\ell}_{t-1}$, ele é votado imediatamente, independentemente do agendamento, de modo que o critério de acurácia possa rejeitar um passo explosivo antes que ele seja aplicado.
+
+\paragraph{Checkpoints de reversão (recuperação)} Os estados do modelo e do otimizador armazenados por cada votação funcionam também como um checkpoint dos últimos pesos comprovadamente bons. Se $\ell_t$ for não finito ou exceder um limiar absoluto $\ell_{\mathrm{rb}} = 2\ln C$ (o dobro da perda de entropia cruzada de um chute aleatório sobre $C$ classes), os pesos são considerados corrompidos: o checkpoint é restaurado, o passo é descartado, e a votação é retomada no próximo lote. No máximo $K_{\max}$ lotes de progresso são perdidos.
+
+A configuração completa é dada na Tabela~\ref{tab:config}; o conjunto de candidatos é idêntico ao da Votação base, e as quatro constantes de proteção/recuo são as únicas quantidades que a Votação Eficiente adiciona sobre o método base.
+
+\begin{table}[htbp]
+\caption{Configuração da Votação Eficiente}
+\begin{center}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{|l|c|l|}
+\hline
+\textbf{Símbolo} & \textbf{Valor} & \textbf{Função} \\
+\hline
+$\mathcal{C}$            & $\{10^{-5},\ldots,10^{-1}\}$ & taxas de aprendizado candidatas \\
+$lr_{\mathrm{init}}$     & $10^{-3}$        & LR antes da primeira votação \\
+$K_{\max}$               & $64$             & intervalo máx.\ de votação (teto do recuo) \\
+$\gamma$                 & $3$              & limiar de pico (nível 2) \\
+$\beta$                  & $0{,}9$          & decaimento da EMA da perda \\
+$\ell_{\mathrm{rb}}$     & $2\ln 10 \approx 4{,}61$ & limiar de reversão (nível 1) \\
+\hline
+\end{tabular}%
+}
+\end{center}
+\label{tab:config}
+\end{table}
+
+O Algoritmo~\ref{alg:efficient} reúne esses componentes no laço de treinamento por época. A votação em si reutiliza a seleção do Algoritmo~\ref{alg:polling}; como as atualizações experimentais sobrescrevem os pesos, o passo vencedor é reaplicado uma vez após a seleção (um único passo extra do otimizador por votação, contabilizado na Seção~\ref{sec:cost}). Cada votação também atualiza o checkpoint de reversão, de modo que o nível de recuperação não acarreta nenhuma contabilidade adicional.
+
+\begin{algorithm}[htbp]
+\caption{Votação Eficiente (uma época)}
+\label{alg:efficient}
+\begin{algorithmic}[1]
+\REQUIRE loader, conjunto de candidatos $\mathcal{C}$, parâmetros $K_{\max}, \gamma, \beta, \ell_{\mathrm{rb}}$
+\STATE $K \leftarrow 1$,\; $s \leftarrow 1$,\; $lr^{*} \leftarrow lr_{\mathrm{init}}$ \COMMENT{persistidos entre épocas}
+\STATE $\bar{\ell} \leftarrow \textsc{None}$,\; $\theta_{\mathrm{ck}} \leftarrow \textsc{None}$,\; \texttt{seen} $\leftarrow$ \textsc{False}
+\FOR{cada lote $\mathcal{B} = (x,y)$}
+    \STATE $\ell \leftarrow L(\theta; \mathcal{B})$
+    \IF{$\ell$ é não finito \textbf{ ou } $\ell > \ell_{\mathrm{rb}}$}
+        \STATE restaure $\theta \leftarrow \theta_{\mathrm{ck}}$;\; $K \leftarrow 1$;\; $s \leftarrow 1$ \COMMENT{nível 1: reversão}
+        \STATE \textbf{continue}
+    \ENDIF
+    \STATE $g \leftarrow \nabla_\theta \ell$
+    \STATE $\mathit{spike} \leftarrow (\bar{\ell} \neq \textsc{None}) \wedge (\ell > \gamma\,\bar{\ell})$ \COMMENT{nível 2}
+    \IF{$\mathit{spike}$ \textbf{ ou } $s \geq K$}
+        \STATE $(lr_{\mathrm{new}}, \mathit{signal}) \leftarrow \textsc{Poll}(\theta, \mathcal{B}, \mathcal{C})$
+        \IF{\textbf{não} \texttt{seen}}
+            \STATE \texttt{seen} $\leftarrow \mathit{signal}$;\; $K \leftarrow 1$
+        \ELSIF{$lr_{\mathrm{new}} = lr^{*}$}
+            \STATE $K \leftarrow \min(2K,\, K_{\max})$ \COMMENT{recuo}
+        \ELSE
+            \STATE $K \leftarrow 1$ \COMMENT{seleção mudou: votar novamente}
+        \ENDIF
+        \STATE $lr^{*} \leftarrow lr_{\mathrm{new}}$;\; $s \leftarrow 0$;\; $\theta_{\mathrm{ck}} \leftarrow \theta$ \COMMENT{checkpoint}
+    \ELSE
+        \STATE $\theta \leftarrow \theta - lr^{*} \cdot g$;\; $s \leftarrow s + 1$ \COMMENT{passo SGD às cegas}
+    \ENDIF
+    \STATE $\bar{\ell} \leftarrow \beta\,\bar{\ell} + (1-\beta)\,\ell$ \COMMENT{$\bar{\ell}\!\leftarrow\!\ell$ se for o primeiro lote}
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+
+\section{Experimentos}
+
+\subsection{Configuração Experimental}
+
+Todos os experimentos usam o CIFAR-10, composto por 50{.}000 imagens de treinamento e 10{.}000 de teste em 10 classes ($32\!\times\!32$ RGB). A implementação completa está publicamente disponível no repositório do projeto.\footnote{\url{https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks}} Reservamos 10\% dos dados de treinamento para validação, resultando em 45{.}000 imagens de treinamento e 5{.}000 de validação.
+
+O modelo, \texttt{SimpleCIFAR10CNN}, é uma CNN de cinco camadas com a seguinte estrutura: dois blocos, cada um consistindo em duas camadas convolucionais (64 e 128 canais, núcleos $3\!\times\!3$, ativações ReLU, subamostragem MaxPool), um terceiro bloco com uma camada convolucional de 256 canais seguida de AdaptiveAvgPool$(1\!\times\!1)$, e uma cabeça de classificação Linear$(256, 10)$. A rede tem $557{.}898$ parâmetros treináveis ($\approx 0{,}56$\,M) e não usa normalização em lote nem dropout, de modo que o otimizador seja a única fonte de adaptação sob estudo.
+
+As imagens são normalizadas por canal usando as estatísticas do conjunto de treinamento (médias RGB: $[125{,}31,\, 122{,}95,\, 113{,}87]$; desvios padrão: $[62{,}99,\, 62{,}09,\, 66{,}70]$). Todos os métodos usam SGD puro (sem momento, sem decaimento de peso) como otimizador base, com tamanho de lote 64 e 150 épocas. Com 45{.}000 imagens de treinamento e tamanho de lote 64, cada época compreende $704$ lotes, totalizando $105{.}600$ lotes ao longo de toda a execução. A taxa de aprendizado base é $10^{-3}$ para todos os métodos. Uma única semente aleatória (42) é fixada para a inicialização dos pesos, o embaralhamento dos dados e a divisão treino/validação, de modo que os três métodos difiram apenas em sua lógica de seleção da taxa de aprendizado e todos os resultados abaixo provenham de uma única execução totalmente reproduzível por método. Os tempos totais (wall-clock) foram medidos em uma única NVIDIA GeForce RTX 5070 (12\,GB) sem nenhuma outra carga de trabalho na GPU.
+
+\subsection{Replicação da Linha de Base}
+
+A linha de base aplica SGD com uma taxa de aprendizado fixa de $10^{-3}$ ao longo de todas as 150 épocas. Como mostrado na Fig.~\ref{fig:losses}, a perda de validação diminui monotonicamente e a acurácia melhora de forma constante, atingindo 57,28\% de melhor acurácia de validação e 56,70\% de acurácia de teste. A LR fixa conservadora garante convergência estável e previsível e fornece um ponto de referência limpo.
+
+\subsection{Replicação do Método de Votação}
+
+O principal objetivo experimental deste trabalho é replicar o Método de Votação de Tan et al.\ em um novo cenário. O artigo original o avaliou no MNIST com uma ANN de duas camadas e LRs candidatas em $[0{,}01, 0{,}05]$. Nossa replicação tem como alvo o CIFAR-10, um benchmark de 10 classes mais difícil, usando uma CNN (\texttt{SimpleCIFAR10CNN}) e SGD puro com LRs candidatas abrangendo cinco ordens de magnitude ($10^{-5}$ a $10^{-1}$). Apesar das diferenças em arquitetura, conjunto de dados e faixa de LRs candidatas, o algoritmo central é preservado exatamente: a cada lote, $N$ atualizações de peso independentes são avaliadas e aquela com a maior acurácia no lote é mantida. O resultado da replicação (84,65\% de melhor acurácia de validação, 83,99\% de acurácia de teste) demonstra que o mecanismo de seleção por votação descobre com sucesso um agendamento de LR em duas fases inteiramente a partir do feedback em nível de lote, sem qualquer conhecimento prévio da taxa ótima.
+
+\section{Resultados}
+
+A Tabela~\ref{tab:results} resume o desempenho dos três métodos e a Tabela~\ref{tab:cost} seu custo computacional. A Fig.~\ref{fig:losses} mostra as curvas de perda de treinamento e validação, e a Fig.~\ref{fig:lrs} mostra as trajetórias da taxa de aprendizado ao longo de todas as 150 épocas.
+
+\begin{table}[htbp]
+\caption{Comparação de Desempenho Entre os Métodos (150 Épocas)}
+\begin{center}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Método} & \textbf{Melhor Val.} & \textbf{Acur.\ Teste} & \textbf{Perda Teste} \\
+\hline
+Linha de base                & 57,28\%          & 56,70\%          & 1,2155 \\
+Votação (artigo base) & 84,65\%        & \textbf{83,99\%} & \textbf{0,6832} \\
+\textbf{Votação Eficiente}   & \textbf{85,07\%} & 83,93\%          & 0,7319 \\
+\hline
+\end{tabular}%
+}
+\end{center}
+\label{tab:results}
+\end{table}
+
+\begin{table}[htbp]
+\caption{Custo Computacional (150 Épocas, 105{.}600 Lotes)}
+\begin{center}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Método} & \textbf{Lotes Votados} & \textbf{Passos do Otim.} & \textbf{s/Época} \\
+\hline
+Linha de base     & ---            & 105{.}600          & 2,50 \\
+Votação (artigo base) & 100\%  & 528{.}000          & 9,10 \\
+\textbf{Votação Eficiente} & \textbf{5,05\%} & \textbf{132{.}285} & \textbf{2,79} \\
+\hline
+\end{tabular}%
+}
+\end{center}
+\label{tab:cost}
+\end{table}
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{images/training_comparison_losses.png}}
+\caption{Perda de treinamento e validação ao longo de 150 épocas para os três métodos. Tanto a Votação quanto a Votação Eficiente convergem rapidamente e atingem baixa perda de validação, superando significativamente a linha de base. A Votação Eficiente acompanha de perto a trajetória do método base apesar de votar apenas 5\% dos lotes. A linha de base converge lentamente sob a LR conservadora fixa.}
+\label{fig:losses}
+\end{figure}
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{images/training_comparison_LRs.png}}
+\caption{Taxa de aprendizado média selecionada por época para os três métodos (escala symlog). O método de Votação seleciona autonomamente o maior candidato (${\approx}\,10^{-1}$) nas primeiras ${\approx}\,36$ épocas, e então faz a transição abrupta para o menor candidato (${\approx}\,10^{-5}$) à medida que o modelo converge. A Votação Eficiente recupera o mesmo agendamento em duas fases --- LR alta até ${\approx}$ época 36, recozendo até $10^{-5}$ por volta da ${\approx}$ época 67 --- enquanto vota apenas uma pequena fração dos lotes. A linha de base permanece constante em $10^{-3}$.}
+\label{fig:lrs}
+\end{figure}
+
+O Método de Votação atinge 84,65\% de melhor acurácia de validação e 83,99\% de acurácia de teste, superando a linha de base em ${\approx}\,27$ pontos percentuais. Como mostrado na Fig.~\ref{fig:lrs}, a LR média selecionada converge rapidamente para ${\approx}\,10^{-1}$ e permanece ali durante as primeiras ${\approx}\,36$ épocas, permitindo a rápida redução da perda visível na Fig.~\ref{fig:losses}. Após essa fase agressiva de exploração, a LR selecionada colapsa para o menor candidato (${\approx}\,10^{-5}$), facilitando o refinamento de grão fino próximo da convergência.
+
+O método de Votação Eficiente atinge 85,07\% de melhor acurácia de validação e 83,93\% de acurácia de teste --- igualando o método base de Votação dentro de 0,1 pp na acurácia de teste e superando-o ligeiramente na validação --- enquanto vota apenas 5{.}337 dos 105{.}600 lotes (5,05\%). Como mostrado na Fig.~\ref{fig:lrs}, ele recupera o mesmo agendamento em duas fases da Votação base: o maior candidato domina as primeiras ${\approx}\,36$ épocas, após as quais a seleção recoze até o menor candidato por volta da ${\approx}$ época 67. Como resumido na Tabela~\ref{tab:cost}, o agendamento sob demanda reduz o total de passos do otimizador de 528{.}000 para 132{.}285 (75\% a menos) e o tempo total de 9,10 para 2,79\,s por época ($3,3\times$ mais rápido), apenas 12\% acima do SGD puro.\footnote{Os tempos totais (wall-clock) foram medidos em execuções isoladas de 3 épocas para evitar o aquecimento da GPU e a contenção entre métodos; os números de acurácia e perda são tomados da única execução de 150 épocas, totalmente reproduzível, reportada ao longo desta seção.} O mecanismo de proteção contra divergência permaneceu barato de invocar: em todas as 5{.}337 votações, nenhuma reversão a um checkpoint foi acionada, indicando que o nível disparado por picos foi por si só suficiente para interceptar passos instáveis antes que fossem aplicados. Sua necessidade é, contudo, demonstrada por uma execução preliminar sem proteção, na qual um único passo às cegas com $lr = 10^{-1}$ por volta da época 33 empurrou os pesos para a divergência numérica (perda NaN), da qual o método sem proteção não conseguiu se recuperar pelas 117 épocas restantes.
+
+\subsection{Modelo de Custo Computacional}
+\label{sec:cost}
+
+O custo de cada método decorre diretamente da frequência com que ele vota. A Votação base executa $N = 5$ atualizações experimentais em cada um dos $105{.}600$ lotes, totalizando $528{.}000$ passos do otimizador. A Votação Eficiente, em vez disso, paga o custo da votação apenas nos lotes votados. Cada votação realiza $N$ atualizações experimentais mais uma reaplicação do passo vencedor ($N + 1 = 6$ passos), enquanto cada lote não votado realiza um único passo às cegas. Com $P = 5{.}337$ votações observadas ao longo da execução,
+\begin{equation}
+S_{\mathrm{eff}} = P\,(N+1) + (B - P) = 5{.}337 \cdot 6 + 100{.}263 = 132{.}285,
+\label{eq:cost}
+\end{equation}
+onde $B = 105{.}600$ é o número total de lotes, reproduzindo exatamente a contagem de passos do otimizador da Tabela~\ref{tab:cost}. A votação, portanto, responde por apenas $5{.}337 \cdot 6 = 32{.}022$ dos $132{.}285$ passos (24\%); os 76\% restantes são passos SGD comuns, razão pela qual o tempo total por época fica próximo da linha de base de SGD puro.
+
+A contagem de votações é, ela própria, uma consequência do recuo exponencial. Uma vez que a seleção se estabiliza, o intervalo $K$ cresce geometricamente até saturar em $K_{\max} = 64$, após o que o método vota aproximadamente uma vez a cada $K_{\max}$ lotes: $704 / 64 \approx 11$ votações por época. A Fig.~\ref{fig:polls} confirma esse comportamento empiricamente. Fora da transição de fase, a contagem de votações por época acompanha de perto o piso de regime permanente de $\approx 11$, com breves rampas geométricas de subida ($1, 2, 4, \ldots, 64$, no máximo $\log_2 K_{\max} = 6$ votações extras) sempre que uma votação discorda momentaneamente. A transição em si é nitidamente visível: a votação atinge o pico de $233$ votações na época~33 --- exatamente a época em que a LR selecionada colapsa de $10^{-1}$ para $10^{-5}$ (Fig.~\ref{fig:lrs}) --- porque votações consecutivas discordam e repetidamente reiniciam $K$ para $1$. As votações, assim, se concentram precisamente onde o agendamento muda e a seleção de fato carrega informação, que é o mecanismo que permite a $5\%$ dos lotes recuperar o agendamento completo de duas fases.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{images/polls_per_epoch.png}}
+\caption{Número de votações realizadas pela Votação Eficiente em cada época (escala logarítmica). Fora da transição de fase, a contagem permanece próxima do piso de regime permanente de $704/K_{\max} \approx 11$ votações por época (linha tracejada), a taxa na qual o intervalo de recuo saturado força uma votação. A votação salta para $233$ na época~33, o momento em que a LR selecionada transita de $10^{-1}$ para $10^{-5}$, quando votações discordantes repetidamente reiniciam o intervalo para um. Ao longo de toda a execução, apenas $5{.}337$ dos $105{.}600$ lotes (5,05\%) são votados, e nenhuma reversão é jamais acionada.}
+\label{fig:polls}
+\end{figure}
+
+\section{Discussão}
+
+\subsection{Votação como Descoberta Eficaz da LR}
+
+A melhoria dramática do Método de Votação sobre a linha de base (83,99\% vs.\ 56,70\% de acurácia de teste) demonstra que a seleção de LR em nível de lote pode descobrir autonomamente um agendamento de duas fases quase ótimo. Nas primeiras ${\approx}\,36$ épocas, o método seleciona consistentemente a maior LR candidata ($10^{-1}$), conduzindo uma rápida redução da perda que o SGD de linha de base fixa ($10^{-3}$) não consegue igualar. A transição subsequente para o menor candidato ($10^{-5}$) espelha os agendamentos clássicos de aquecimento-seguido-de-decaimento, mas é derivada inteiramente do feedback de acurácia do lote, sem qualquer conhecimento prévio. Isso confirma que a LR ótima para o SGD puro no CIFAR-10 está muito acima do valor conservador ($10^{-3}$) que tipicamente seria escolhido como taxa fixa, e que o conjunto de candidatos da votação deve abranger a região ótima para que o método tenha sucesso.
+
+\subsection{Votação Eficiente: Mesmo Agendamento a uma Fração do Custo}
+
+Os resultados da Votação Eficiente mostram que o valor da votação reside em \emph{quando a seleção muda}, não na seleção em si sendo repetida a cada lote. Dentro de cada fase do treinamento, o resultado da votação é essencialmente constante --- o maior candidato durante a exploração, o menor próximo da convergência --- de modo que o recuo exponencial rapidamente se estabiliza no intervalo máximo e o método degenera para SGD puro na taxa descoberta. A votação por lote é retomada automaticamente e apenas onde importa: durante a transição de fase, quando votações consecutivas discordam e o intervalo colapsa de volta para um. Essa adaptatividade é o que permite a 5\% das votações recuperar o agendamento completo de duas fases, igualando a acurácia da Votação base a um custo próximo do SGD.
+
+Os dois métodos deixam a fase de LR alta no mesmo ponto --- a LR média selecionada em ambos cai abaixo de $10^{-2}$ na época~37 --- mas recozem em velocidades diferentes. A Votação base, que redecide a cada lote, colapsa para o menor candidato em cerca de seis épocas (atingindo $\approx 10^{-5}$ por volta da época~43), enquanto a Votação Eficiente recoze mais gradualmente e se estabiliza em $10^{-5}$ apenas por volta da época~67. Isso é uma consequência direta do recuo: durante a transição, o intervalo de votação ainda não foi reiniciado para um a cada lote, de modo que os ajustes descendentes da LR são aplicados com granularidade mais grosseira. Crucialmente, esse recozimento mais lento não custa nada na qualidade final --- a Votação Eficiente ainda atinge 100\% de acurácia de treinamento (por volta da época~61) e supera ligeiramente a Votação base na validação --- o que indica que a trajetória precisa através da transição é muito menos importante do que alcançar o regime de LR alta cedo e o regime de LR baixa eventualmente. A lacuna persistente entre a acurácia de treinamento perfeita e a acurácia de validação de $\approx 85\%$ é compartilhada por ambos os métodos de votação, confirmando que ela reflete a capacidade da CNN compacta em vez de qualquer instabilidade introduzida pela votação esparsa.
+
+O mecanismo de proteção contra divergência aborda o único risco genuíno introduzido pela omissão de votações. A Votação base valida implicitamente cada passo antes de mantê-lo, de modo que um passo explosivo com $lr = 10^{-1}$ simplesmente não é selecionado; os passos às cegas entre votações não têm tal proteção, e nossa execução preliminar sem proteção demonstra que um único passo desse tipo pode destruir irrecuperavelmente o treinamento. O mecanismo restaura a proteção ausente a custo desprezível reutilizando quantidades que o método já computa: a perda do lote pré-passo (para detecção de picos) e os snapshots de estado dos pontos de votação (como checkpoints de reversão). Notavelmente, o nível preventivo isolado foi suficiente na prática --- votar lotes suspeitos antes de dar o passo fez com que o nível de recuperação nunca fosse acionado nas execuções protegidas.
+
+\subsection{Compromissos (Trade-offs)}
+
+\begin{itemize}
+\item \textbf{Custo computacional:} A Votação base requer $N = 5$ atualizações experimentais por lote, elevando o tempo total por época em $3,6\times$ sobre o SGD puro. A Votação Eficiente reduz esse sobrecusto para 12\% sobre o SGD puro (Tabela~\ref{tab:cost}) preservando a acurácia, tornando a votação prática para uso rotineiro.
+\item \textbf{Estabilidade:} A linha de base fixa é a mais previsível. A Votação base é intrinsecamente segura porque cada passo é validado antes de ser mantido. A Votação Eficiente troca essa validação por passo por velocidade e recupera a segurança por meio de seu mecanismo de proteção em dois níveis; sem o mecanismo, passos às cegas de LR alta podem divergir irrecuperavelmente, como observado empiricamente.
+\item \textbf{Generalização:} Ambos os métodos baseados em votação generalizam bem (a acurácia de teste está dentro de 0,66 pp da melhor validação para a Votação e 1,14 pp para a Votação Eficiente), confirmando que o critério de seleção por votação não induz sobreajuste (overfitting) quando aplicado por lote. O fator crítico é garantir que o conjunto de candidatos abranja valores de LR próximos do verdadeiro ótimo para a arquitetura e o conjunto de dados dados.
+\item \textbf{Hiperparâmetros:} A Votação Eficiente introduz quatro constantes ($K_{\max}$, $\gamma$, $\beta$, $\ell_{\mathrm{rb}}$). Nenhuma exigiu ajuste em nossos experimentos: elas codificam heurísticas livres de escala (recuo geométrico, picos relativos de perda, perda do chute aleatório) em vez de magnitudes específicas do problema.
+\end{itemize}
+
+\subsection{Limitações e Trabalhos Futuros}
+
+Nossas conclusões repousam sobre uma única arquitetura, conjunto de dados e otimizador base (SGD puro no CIFAR-10), e sobre uma única execução reproduzível por método, em vez de um estudo com múltiplas sementes; as acurácias absolutas e a contagem exata de votações variariam entre sementes, ainda que o comportamento qualitativo de duas fases seja robustamente conduzido pelo conjunto de candidatos. O método também pressupõe que o conjunto de candidatos $\mathcal{C}$ delimite a LR ótima --- um conjunto de candidatos que não cobrisse a região ótima limitaria ambas as variantes de votação, independentemente da frequência de votação. Por fim, o mecanismo de proteção reutiliza a perda por lote e, portanto, assume que picos de perda são um indicador confiável de divergência iminente; isso se manteve ao longo de nossas execuções (o nível de recuperação nunca disparou), mas relevos patológicos poderiam, em princípio, derrotar o nível preventivo. Extensões naturais incluem combinar a votação com momento ou otimizadores adaptativos como o Adam, onde a interação entre a seleção de LR por votação e o escalonamento por parâmetro é não trivial, e a avaliação em redes mais profundas e benchmarks maiores, onde a economia de custo da votação sob demanda se acumula.
+
+\section{Conclusão}
+
+Replicamos o Método de Votação de Tan et al.\ no CIFAR-10 --- um cenário que difere do original em arquitetura (CNN vs.\ ANN), conjunto de dados e faixa de candidatos --- e confirmamos que a seleção da taxa de aprendizado em nível de lote descobre autonomamente um agendamento de duas fases quase ótimo, elevando a acurácia de teste de 56,70\% da linha de base para 83,99\% sem qualquer fórmula de LR projetada manualmente. Em seguida, identificamos e removemos a fraqueza central do método, seu sobrecusto de $N\times$ por lote, com o método de Votação Eficiente proposto. Ao votar sob demanda sob um agendamento de recuo exponencial e proteger os passos não votados com um mecanismo de proteção contra divergência em dois níveis, a Votação Eficiente iguala a acurácia do método base (83,93\% de teste, dentro de 0,1 pp) enquanto vota apenas 5,05\% dos lotes, cortando os passos do otimizador em 75\% e o tempo total por época em $3,3\times$, ficando a 12\% do SGD puro. O modelo de custo da Eq.~\eqref{eq:cost} e a distribuição de votações da Fig.~\ref{fig:polls} juntos explicam o porquê: o valor da votação reside em detectar \emph{quando} a LR ótima muda, não em redecidi-la a cada lote, e essa detecção é barata. Esses resultados sugerem que a seleção baseada em votação pode ser tornada prática para o treinamento rotineiro, transformando uma técnica precisa, porém custosa, em uma cujo custo é essencialmente o do otimizador subjacente.
+
+\end{document}
