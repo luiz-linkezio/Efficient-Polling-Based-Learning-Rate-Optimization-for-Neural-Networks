@@ -8,6 +8,18 @@
 \usepackage{textcomp}
 \usepackage{xcolor}
 \usepackage[hyphens]{url}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric,arrows.meta,positioning,backgrounds}
+\tikzset{
+  flowfont/.style={font=\footnotesize},
+  startstop/.style={rectangle, rounded corners=3pt, draw=black!55, fill=black!8, thick, align=center, inner sep=4pt, minimum height=7mm},
+  proc/.style={rectangle, rounded corners=3pt, draw=blue!60, fill=blue!8, thick, align=center, inner sep=4pt, minimum height=7mm},
+  decide/.style={diamond, aspect=2.2, draw=orange!80!black, fill=orange!15, thick, align=center, inner sep=1pt},
+  pick/.style={rectangle, rounded corners=3pt, draw=green!55!black, fill=green!14, thick, align=center, inner sep=4pt, minimum height=7mm},
+  guard/.style={rectangle, rounded corners=3pt, draw=red!70!black, fill=red!8, thick, align=center, inner sep=4pt, minimum height=7mm},
+  flowarr/.style={-{Latex[length=2mm]}, thick, draw=black!75},
+  flbl/.style={font=\scriptsize\itshape, inner sep=1.5pt},
+}
 \usepackage[brazil]{babel}
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
@@ -74,7 +86,7 @@ k^{*} = \arg\max_{k} \; \mathrm{acc}(\hat{\theta}_{t,k},\, \mathcal{B}_t)
 
 onde $\mathcal{B}_t$ é o mini-lote atual. Usamos $\mathcal{C} = \{10^{-5},\, 10^{-4},\, 10^{-3},\, 10^{-2},\, 10^{-1}\}$, abrangendo cinco ordens de magnitude centradas na LR base $= 10^{-3}$. Observe que Tan et al.\ originalmente usaram LRs na faixa $[0{,}01, 0{,}05]$ com uma ANN simples e atualizações semelhantes ao SGD; nosso conjunto de candidatos é adaptado ao cenário de CNN e cobre uma faixa mais ampla para permitir que o otimizador descubra a LR mais adequada de forma autônoma.
 
-O Algoritmo~\ref{alg:polling} apresenta o procedimento por lote. A seleção requer $N$ atualizações de peso experimentais avaliadas a partir do mesmo instantâneo (snapshot) $(\theta_t, g_t)$; o candidato vencedor é mantido diretamente, de modo que não é necessário um passo de reaplicação. Empates na acurácia do lote são desfeitos em favor da menor LR candidata, correspondendo ao comportamento conservador do método original.
+O Algoritmo~\ref{alg:polling} apresenta o procedimento por lote, e a Fig.~\ref{fig:polling-flow} ilustra o fluxo de dados correspondente. A seleção requer $N$ atualizações de peso experimentais avaliadas a partir do mesmo instantâneo (snapshot) $(\theta_t, g_t)$; o candidato vencedor é mantido diretamente, de modo que não é necessário um passo de reaplicação. Empates na acurácia do lote são desfeitos em favor da menor LR candidata, correspondendo ao comportamento conservador do método original.
 
 \begin{algorithm}[htbp]
 \caption{Passo de Votação (método base, um lote)}
@@ -93,6 +105,33 @@ O Algoritmo~\ref{alg:polling} apresenta o procedimento por lote. A seleção req
 \end{algorithm}
 
 Na prática, as $N$ atualizações experimentais da linha~3 são realizadas copiando profundamente (deep-copy) os estados do modelo e do otimizador uma vez, e então, para cada candidato, recarregando esse snapshot, sobrescrevendo a taxa de aprendizado do otimizador e dando um único passo do otimizador. Recarregar o estado do otimizador junto com os pesos garante que cada candidato parta da condição pré-passo idêntica; para o SGD puro sem momento, o otimizador não carrega estado algum, de modo que a restauração é exata e a seleção é determinada puramente pela taxa de aprendizado candidata. O critério de seleção é a acurácia de classificação por lote dos pesos resultantes sobre o mesmo mini-lote $\mathcal{B}_t$ que produziu o gradiente, avaliada sob \texttt{torch.no\_grad}; a entropia cruzada é a perda de treinamento, mas a acurácia é o sinal de seleção, correspondendo ao uso de acurácia do modelo base no método original. Esse procedimento de snapshot e restauração é compartilhado literalmente pela Votação Eficiente, onde o snapshot tomado a cada votação é adicionalmente retido como o checkpoint de reversão usado pelo mecanismo de proteção contra divergência.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=5mm, flowfont]
+  \node[startstop] (b) {Mini-lote $\mathcal{B}_t=(x,y)$};
+  \node[proc, below=of b] (grad) {forward $+$ backward:\\$g \leftarrow \nabla_\theta L(\theta;\mathcal{B}_t)$};
+  \node[proc, below=of grad] (snap) {snapshot dos pesos $+$\\estado do otimizador $(\theta,\,\mathrm{opt})$};
+  \node[proc, below=7mm of snap, text width=52mm] (trial) {\textbf{para cada} $lr_k \in \mathcal{C}=\{10^{-5},\dots,10^{-1}\}$:\\[1pt]passo experimental $\hat\theta_k \leftarrow \theta - lr_k\,g$\\[1pt]acurácia do lote $a_k \leftarrow \mathrm{acc}(\hat\theta_k,\mathcal{B}_t)$};
+  \node[pick, below=7mm of trial] (sel) {selecionar $k^{*}=\arg\max_k a_k$\\(empates $\rightarrow$ menor $lr$)};
+  \node[proc, below=of sel] (keep) {manter o passo vencedor:\\$\theta \leftarrow \hat\theta_{k^{*}}$};
+  \node[startstop, below=of keep] (next) {próximo lote};
+  \begin{scope}[on background layer]
+    \draw[draw=blue!45, fill=blue!8, thick, rounded corners=3pt]
+      ([xshift=2.8mm,yshift=2.8mm]trial.south west) rectangle ([xshift=2.8mm,yshift=2.8mm]trial.north east);
+    \draw[draw=blue!45, fill=blue!8, thick, rounded corners=3pt]
+      ([xshift=1.4mm,yshift=1.4mm]trial.south west) rectangle ([xshift=1.4mm,yshift=1.4mm]trial.north east);
+  \end{scope}
+  \draw[flowarr] (b) -- (grad);
+  \draw[flowarr] (grad) -- (snap);
+  \draw[flowarr] (snap) -- (trial);
+  \draw[flowarr] (trial) -- (sel);
+  \draw[flowarr] (sel) -- (keep);
+  \draw[flowarr] (keep) -- (next);
+\end{tikzpicture}
+\caption{Fluxo de controle por lote do método base de Votação (Algoritmo~\ref{alg:polling}). Cada lote calcula um único gradiente e então avalia todas as $N$ taxas de aprendizado candidatas como passos experimentais a partir do mesmo snapshot, mantendo os pesos de maior acurácia no lote. O bloco empilhado denota as $N$ atualizações experimentais independentes.}
+\label{fig:polling-flow}
+\end{figure}
 
 \subsection{Extensão Proposta: Votação Eficiente}
 
@@ -140,7 +179,7 @@ $\ell_{\mathrm{rb}}$     & $2\ln 10 \approx 4{,}61$ & limiar de reversão (níve
 \label{tab:config}
 \end{table}
 
-O Algoritmo~\ref{alg:efficient} reúne esses componentes no laço de treinamento por época. A votação em si reutiliza a seleção do Algoritmo~\ref{alg:polling}; como as atualizações experimentais sobrescrevem os pesos, o passo vencedor é reaplicado uma vez após a seleção (um único passo extra do otimizador por votação, contabilizado na Seção~\ref{sec:cost}). Cada votação também atualiza o checkpoint de reversão, de modo que o nível de recuperação não acarreta nenhuma contabilidade adicional.
+O Algoritmo~\ref{alg:efficient} reúne esses componentes no laço de treinamento por época, e a Fig.~\ref{fig:eff-flow} mostra o fluxo de controle por lote resultante. A votação em si reutiliza a seleção do Algoritmo~\ref{alg:polling}; como as atualizações experimentais sobrescrevem os pesos, o passo vencedor é reaplicado uma vez após a seleção (um único passo extra do otimizador por votação, contabilizado na Seção~\ref{sec:cost}). Cada votação também atualiza o checkpoint de reversão, de modo que o nível de recuperação não acarreta nenhuma contabilidade adicional.
 
 \begin{algorithm}[htbp]
 \caption{Votação Eficiente (uma época)}
@@ -174,6 +213,41 @@ O Algoritmo~\ref{alg:efficient} reúne esses componentes no laço de treinamento
 \ENDFOR
 \end{algorithmic}
 \end{algorithm}
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tikzpicture}[node distance=6mm and 7mm, flowfont]
+  \node[startstop] (b) {Mini-lote $\mathcal{B}=(x,y)$};
+  \node[proc, below=of b] (loss) {calcular perda $\ell \leftarrow L(\theta;\mathcal{B})$};
+  \node[decide, below=of loss, text width=28mm] (d1) {$\ell$ não finita \textbf{ou} $\ell > \ell_{\mathrm{rb}}$?};
+  \node[guard, left=of d1, text width=27mm] (rb) {\textbf{Nível 1: reversão}\\$\theta \leftarrow \theta_{\mathrm{ck}}$;\;$K\!\leftarrow\!1$;\;pular};
+  \node[proc, below=of d1] (grad) {backward: $g \leftarrow \nabla_\theta \ell$};
+  \node[decide, below=of grad, text width=30mm] (d2) {pico ($\ell > \gamma\bar\ell$)\\\textbf{ou} $s \ge K$?};
+  \node[proc, right=of d2, text width=31mm] (blind) {\textbf{passo SGD às cegas}\\$\theta \leftarrow \theta - lr^{*} g$;\;$s\!\leftarrow\!s\!+\!1$};
+  \node[pick, below=of d2, text width=34mm] (poll) {\textbf{votar} (Alg.~\ref{alg:polling}):\\selecionar $lr^{*}$ em $\mathcal{C}$};
+  \node[proc, below=of poll, text width=55mm] (back) {recuo: \textbf{se} $lr^{*}\!=\!lr^{*}_{\mathrm{prev}}$ \textbf{então} $K\!\leftarrow\!\min(2K,K_{\max})$ \textbf{senão} $K\!\leftarrow\!1$};
+  \node[proc, below=of back, text width=40mm] (ck) {checkpoint $\theta_{\mathrm{ck}}\!\leftarrow\!\theta$;\;$s\!\leftarrow\!0$};
+  \node[proc, below=of ck, text width=47mm] (ema) {atualizar EMA $\bar\ell \leftarrow \beta\bar\ell+(1-\beta)\ell$};
+  \node[startstop, below=of ema] (next) {próximo lote};
+  \draw[flowarr] (b) -- (loss);
+  \draw[flowarr] (loss) -- (d1);
+  \draw[flowarr] (d1) -- node[flbl,left]{não} (grad);
+  \draw[flowarr] (d1) -- node[flbl,above]{sim} (rb);
+  \draw[flowarr] (grad) -- (d2);
+  \draw[flowarr] (d2) -- node[flbl,above]{não} (blind);
+  \draw[flowarr] (d2) -- node[flbl,left]{sim} (poll);
+  \draw[flowarr] (poll) -- (back);
+  \draw[flowarr] (back) -- (ck);
+  \draw[flowarr] (ck) -- (ema);
+  \draw[flowarr] (ema) -- (next);
+  \draw[flowarr] (blind.south) |- (ema.east);
+  \draw[flowarr] (rb.south) |- (next.west);
+\end{tikzpicture}%
+}
+\caption{Fluxo de controle de um lote da Votação Eficiente (Algoritmo~\ref{alg:efficient}). A maioria dos lotes faz o \emph{passo SGD às cegas} (à direita); uma votação só é forçada quando o intervalo se esgota ($s \ge K$) ou um pico de perda é detectado, após o que o recuo exponencial aumenta ou reinicia o intervalo de votação $K$. O mecanismo de proteção em dois níveis intercepta pesos corrompidos (Nível~1, à esquerda, que pula para o próximo lote) e picos suspeitos (Nível~2, via votação). Cada votação também atualiza o checkpoint de reversão $\theta_{\mathrm{ck}}$.}
+\label{fig:eff-flow}
+\end{figure}
 
 \section{Experimentos}
 

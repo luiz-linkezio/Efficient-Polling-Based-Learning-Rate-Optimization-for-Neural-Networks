@@ -8,6 +8,18 @@
 \usepackage{textcomp}
 \usepackage{xcolor}
 \usepackage[hyphens]{url}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric,arrows.meta,positioning,backgrounds}
+\tikzset{
+  flowfont/.style={font=\footnotesize},
+  startstop/.style={rectangle, rounded corners=3pt, draw=black!55, fill=black!8, thick, align=center, inner sep=4pt, minimum height=7mm},
+  proc/.style={rectangle, rounded corners=3pt, draw=blue!60, fill=blue!8, thick, align=center, inner sep=4pt, minimum height=7mm},
+  decide/.style={diamond, aspect=2.2, draw=orange!80!black, fill=orange!15, thick, align=center, inner sep=1pt},
+  pick/.style={rectangle, rounded corners=3pt, draw=green!55!black, fill=green!14, thick, align=center, inner sep=4pt, minimum height=7mm},
+  guard/.style={rectangle, rounded corners=3pt, draw=red!70!black, fill=red!8, thick, align=center, inner sep=4pt, minimum height=7mm},
+  flowarr/.style={-{Latex[length=2mm]}, thick, draw=black!75},
+  flbl/.style={font=\scriptsize\itshape, inner sep=1.5pt},
+}
 \def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
     T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
 \begin{document}
@@ -71,7 +83,7 @@ k^{*} = \arg\max_{k} \; \mathrm{acc}(\hat{\theta}_{t,k},\, \mathcal{B}_t)
 
 where $\mathcal{B}_t$ is the current mini-batch. We use $\mathcal{C} = \{10^{-5},\, 10^{-4},\, 10^{-3},\, 10^{-2},\, 10^{-1}\}$, spanning five orders of magnitude centered around the base LR $= 10^{-3}$. Note that Tan et al.\ originally used LRs in the range $[0.01, 0.05]$ with a simple ANN and SGD-like updates; our candidate set is adapted to the CNN setting and covers a wider range to allow the optimizer to discover the most suitable LR autonomously.
 
-Algorithm~\ref{alg:polling} states the per-batch procedure. The selection requires $N$ trial weight updates evaluated from the same snapshot $(\theta_t, g_t)$; the winning candidate is kept directly, so no re-application step is needed. Ties on batch accuracy are broken in favor of the smallest candidate LR, matching the conservative behavior of the original method.
+Algorithm~\ref{alg:polling} states the per-batch procedure, and Fig.~\ref{fig:polling-flow} depicts the corresponding data flow. The selection requires $N$ trial weight updates evaluated from the same snapshot $(\theta_t, g_t)$; the winning candidate is kept directly, so no re-application step is needed. Ties on batch accuracy are broken in favor of the smallest candidate LR, matching the conservative behavior of the original method.
 
 \begin{algorithm}[htbp]
 \caption{Polling step (base method, one batch)}
@@ -90,6 +102,33 @@ Algorithm~\ref{alg:polling} states the per-batch procedure. The selection requir
 \end{algorithm}
 
 In practice, the $N$ trial updates of line~3 are realized by deep-copying the model and optimizer states once, then, for each candidate, reloading that snapshot, overwriting the optimizer's learning rate, and taking a single optimizer step. Reloading the optimizer state alongside the weights guarantees that every candidate departs from the identical pre-step condition; for vanilla SGD without momentum the optimizer carries no state, so the restoration is exact and the selection is determined purely by the candidate learning rate. The selection criterion is the per-batch classification accuracy of the resulting weights on the same mini-batch $\mathcal{B}_t$ that produced the gradient, evaluated under \texttt{torch.no\_grad}; cross-entropy is the training loss but accuracy is the selection signal, matching the original method's use of base-model accuracy. This snapshot-and-restore procedure is shared verbatim by Efficient Polling, where the snapshot taken at each poll is additionally retained as the rollback checkpoint used by the divergence guard.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=5mm, flowfont]
+  \node[startstop] (b) {Mini-batch $\mathcal{B}_t=(x,y)$};
+  \node[proc, below=of b] (grad) {forward $+$ backward:\\$g \leftarrow \nabla_\theta L(\theta;\mathcal{B}_t)$};
+  \node[proc, below=of grad] (snap) {snapshot weights $+$\\optimizer state $(\theta,\,\mathrm{opt})$};
+  \node[proc, below=7mm of snap, text width=50mm] (trial) {\textbf{for each} $lr_k \in \mathcal{C}=\{10^{-5},\dots,10^{-1}\}$:\\[1pt]trial step $\hat\theta_k \leftarrow \theta - lr_k\,g$\\[1pt]batch score $a_k \leftarrow \mathrm{acc}(\hat\theta_k,\mathcal{B}_t)$};
+  \node[pick, below=7mm of trial] (sel) {select $k^{*}=\arg\max_k a_k$\\(ties $\rightarrow$ smallest $lr$)};
+  \node[proc, below=of sel] (keep) {keep winning step:\\$\theta \leftarrow \hat\theta_{k^{*}}$};
+  \node[startstop, below=of keep] (next) {next batch};
+  \begin{scope}[on background layer]
+    \draw[draw=blue!45, fill=blue!8, thick, rounded corners=3pt]
+      ([xshift=2.8mm,yshift=2.8mm]trial.south west) rectangle ([xshift=2.8mm,yshift=2.8mm]trial.north east);
+    \draw[draw=blue!45, fill=blue!8, thick, rounded corners=3pt]
+      ([xshift=1.4mm,yshift=1.4mm]trial.south west) rectangle ([xshift=1.4mm,yshift=1.4mm]trial.north east);
+  \end{scope}
+  \draw[flowarr] (b) -- (grad);
+  \draw[flowarr] (grad) -- (snap);
+  \draw[flowarr] (snap) -- (trial);
+  \draw[flowarr] (trial) -- (sel);
+  \draw[flowarr] (sel) -- (keep);
+  \draw[flowarr] (keep) -- (next);
+\end{tikzpicture}
+\caption{Per-batch control flow of the base Polling method (Algorithm~\ref{alg:polling}). Each batch computes a single gradient, then evaluates all $N$ candidate learning rates as trial steps from the same snapshot and keeps the weights with the highest batch accuracy. The stacked block denotes the $N$ independent trial updates.}
+\label{fig:polling-flow}
+\end{figure}
 
 \subsection{Proposed Extension: Efficient Polling}
 
@@ -137,7 +176,7 @@ $\ell_{\mathrm{rb}}$     & $2\ln 10 \approx 4.61$ & rollback threshold (tier 1) 
 \label{tab:config}
 \end{table}
 
-Algorithm~\ref{alg:efficient} assembles these components into the per-epoch training loop. The poll itself reuses the selection of Algorithm~\ref{alg:polling}; because the trial updates overwrite the weights, the winning step is re-applied once after selection (a single extra optimizer step per poll, accounted for in Section~\ref{sec:cost}). Every poll also refreshes the rollback checkpoint, so the recovery tier carries no additional bookkeeping.
+Algorithm~\ref{alg:efficient} assembles these components into the per-epoch training loop, and Fig.~\ref{fig:eff-flow} shows the resulting per-batch control flow. The poll itself reuses the selection of Algorithm~\ref{alg:polling}; because the trial updates overwrite the weights, the winning step is re-applied once after selection (a single extra optimizer step per poll, accounted for in Section~\ref{sec:cost}). Every poll also refreshes the rollback checkpoint, so the recovery tier carries no additional bookkeeping.
 
 \begin{algorithm}[htbp]
 \caption{Efficient Polling (one epoch)}
@@ -171,6 +210,41 @@ Algorithm~\ref{alg:efficient} assembles these components into the per-epoch trai
 \ENDFOR
 \end{algorithmic}
 \end{algorithm}
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tikzpicture}[node distance=6mm and 7mm, flowfont]
+  \node[startstop] (b) {Mini-batch $\mathcal{B}=(x,y)$};
+  \node[proc, below=of b] (loss) {compute loss $\ell \leftarrow L(\theta;\mathcal{B})$};
+  \node[decide, below=of loss, text width=28mm] (d1) {$\ell$ non-finite \textbf{or} $\ell > \ell_{\mathrm{rb}}$?};
+  \node[guard, left=of d1, text width=26mm] (rb) {\textbf{Tier 1: rollback}\\$\theta \leftarrow \theta_{\mathrm{ck}}$;\;$K\!\leftarrow\!1$;\;skip};
+  \node[proc, below=of d1] (grad) {backward: $g \leftarrow \nabla_\theta \ell$};
+  \node[decide, below=of grad, text width=30mm] (d2) {spike ($\ell > \gamma\bar\ell$)\\\textbf{or} $s \ge K$?};
+  \node[proc, right=of d2, text width=30mm] (blind) {\textbf{blind SGD step}\\$\theta \leftarrow \theta - lr^{*} g$;\;$s\!\leftarrow\!s\!+\!1$};
+  \node[pick, below=of d2, text width=34mm] (poll) {\textbf{poll} (Alg.~\ref{alg:polling}):\\select $lr^{*}$ over $\mathcal{C}$};
+  \node[proc, below=of poll, text width=54mm] (back) {backoff: \textbf{if} $lr^{*}\!=\!lr^{*}_{\mathrm{prev}}$ \textbf{then} $K\!\leftarrow\!\min(2K,K_{\max})$ \textbf{else} $K\!\leftarrow\!1$};
+  \node[proc, below=of back, text width=40mm] (ck) {checkpoint $\theta_{\mathrm{ck}}\!\leftarrow\!\theta$;\;$s\!\leftarrow\!0$};
+  \node[proc, below=of ck, text width=46mm] (ema) {update EMA $\bar\ell \leftarrow \beta\bar\ell+(1-\beta)\ell$};
+  \node[startstop, below=of ema] (next) {next batch};
+  \draw[flowarr] (b) -- (loss);
+  \draw[flowarr] (loss) -- (d1);
+  \draw[flowarr] (d1) -- node[flbl,left]{no} (grad);
+  \draw[flowarr] (d1) -- node[flbl,above]{yes} (rb);
+  \draw[flowarr] (grad) -- (d2);
+  \draw[flowarr] (d2) -- node[flbl,above]{no} (blind);
+  \draw[flowarr] (d2) -- node[flbl,left]{yes} (poll);
+  \draw[flowarr] (poll) -- (back);
+  \draw[flowarr] (back) -- (ck);
+  \draw[flowarr] (ck) -- (ema);
+  \draw[flowarr] (ema) -- (next);
+  \draw[flowarr] (blind.south) |- (ema.east);
+  \draw[flowarr] (rb.south) |- (next.west);
+\end{tikzpicture}%
+}
+\caption{Control flow of one Efficient Polling batch (Algorithm~\ref{alg:efficient}). Most batches take the cheap \emph{blind SGD step} (right); a poll is forced only when the interval elapses ($s \ge K$) or a loss spike is detected, after which exponential backoff grows or resets the polling interval $K$. The two-tier divergence guard intercepts broken weights (Tier~1, left, which skips to the next batch) and suspicious spikes (Tier~2, via the poll). Each poll also refreshes the rollback checkpoint $\theta_{\mathrm{ck}}$.}
+\label{fig:eff-flow}
+\end{figure}
 
 \section{Experiments}
 
