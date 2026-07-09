@@ -2,7 +2,7 @@
 
 > Get the accuracy of polling-based learning-rate selection at essentially the cost of plain SGD.
 
-[🇧🇷 Versão em português](README(pt-br).md) · [📄 Paper (LaTeX)](docs/paper.tex)
+[🇧🇷 Versão em português](README(pt-br).md) · [🎥 Presentation video](docs/video/apresentação.mp4)
 
 This repository replicates the **Polling Method** of Tan et al. on CIFAR-10 and introduces **Efficient Polling**, a novel extension that recovers the same learning-rate schedule — and the same accuracy — while polling only **5% of batches**, cutting optimizer steps by 75% and per-epoch wall-clock time by **3.3×**.
 
@@ -88,6 +88,12 @@ versus `528,000` for base Polling — a 75% reduction, exactly reproducing the m
 
 ---
 
+## Presentation
+
+🎥 [Watch the presentation video](docs/video/apresentação.mp4) · 📊 [Slides (PDF)](docs/apresentacao_polling.pdf) · [Slides (PPTX)](docs/apresentacao_polling.pptx)
+
+---
+
 ## Repository structure
 
 ```
@@ -95,8 +101,9 @@ versus `528,000` for base Polling — a 75% reduction, exactly reproducing the m
 ├── notebooks/
 │   └── cifar10.ipynb          # main experiments: data, model, all 3 methods, plots
 ├── docs/
-│   ├── paper.tex              # IEEE paper (English)
-│   ├── paper(pt-br).tex       # IEEE paper (Portuguese)
+│   ├── video/
+│   │   └── apresentação.mp4   # presentation video
+│   ├── apresentacao_polling.pdf
 │   └── apresentacao_polling.pptx
 ├── images/                    # figures used in the paper and this README
 ├── models/                    # best checkpoints per method (.pt, gitignored)
