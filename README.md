@@ -2,7 +2,7 @@
 
 > Get the accuracy of polling-based learning-rate selection at essentially the cost of plain SGD.
 
-[🇧🇷 Versão em português](README(pt-br).md) · [🎥 Presentation video](docs/video/apresentação.mp4)
+[🇧🇷 Versão em português](README(pt-br).md) · [🎥 Presentation video](videos/apresentação.mp4)
 
 This repository replicates the **Polling Method** of Tan et al. on CIFAR-10 and introduces **Efficient Polling**, a novel extension that recovers the same learning-rate schedule — and the same accuracy — while polling only **5% of batches**, cutting optimizer steps by 75% and per-epoch wall-clock time by **3.3×**.
 
@@ -90,7 +90,7 @@ versus `528,000` for base Polling — a 75% reduction, exactly reproducing the m
 
 ## Presentation
 
-🎥 [Watch the presentation video](docs/video/apresentação.mp4) · 📊 [Slides (PDF)](docs/apresentacao_polling.pdf) · [Slides (PPTX)](docs/apresentacao_polling.pptx)
+🎥 [Watch the presentation video](videos/apresentação.mp4) · 📊 [Slides (PDF)](docs/apresentacao_polling.pdf) · [Slides (PPTX)](docs/apresentacao_polling.pptx)
 
 ---
 
@@ -101,10 +101,10 @@ versus `528,000` for base Polling — a 75% reduction, exactly reproducing the m
 ├── notebooks/
 │   └── cifar10.ipynb          # main experiments: data, model, all 3 methods, plots
 ├── docs/
-│   ├── video/
-│   │   └── apresentação.mp4   # presentation video
 │   ├── apresentacao_polling.pdf
 │   └── apresentacao_polling.pptx
+├── videos/
+│   └── apresentação.mp4       # presentation video
 ├── images/                    # figures used in the paper and this README
 ├── models/                    # best checkpoints per method (.pt, gitignored)
 ├── README.md
@@ -171,10 +171,10 @@ If you use this work, please cite the paper:
 
 The base Polling method is from Tan et al. (see `docs/base_paper.pdf`).
 
-## Authors
+## 🧑‍💻 Authors
 
-- **Luiz Henrique** — `lhbas@cin.ufpe.br`
-- **José Ronaldo** — `jrss@cin.ufpe.br`
+| [<img src="https://github.com/luiz-linkezio.png" width=115><br><sub>Luiz Henrique</sub><br>](https://github.com/luiz-linkezio) <sub>Developer</sub><br> <sub>[LinkedIn](https://www.linkedin.com/in/lhbas/)</sub><br> <sub>Portfolio</sub> | [<img src="https://github.com/dev-joseronaldo.png" width=115><br><sub>José Ronaldo</sub><br>](https://github.com/Dev-JoseRonaldo) <sub>Developer</sub><br> <sub>[LinkedIn](https://www.linkedin.com/in/devjoseronaldo/)</sub><br> <sub>[Portfolio](https://joseronaldo.netlify.app/)</sub> |
+| :-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
 
 Universidade Federal de Pernambuco, Recife, Brazil.
 
