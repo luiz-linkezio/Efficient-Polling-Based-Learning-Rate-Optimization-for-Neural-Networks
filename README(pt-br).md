@@ -2,9 +2,17 @@
 
 > A acurácia da seleção de taxa de aprendizado por polling, ao custo de um SGD comum.
 
+[![PyPI](https://img.shields.io/pypi/v/efficient-polling.svg)](https://pypi.org/project/efficient-polling/)
+[![Python](https://img.shields.io/pypi/pyversions/efficient-polling.svg)](https://pypi.org/project/efficient-polling/)
+[![License](https://img.shields.io/pypi/l/efficient-polling.svg)](LICENSE)
+
+```bash
+pip install efficient-polling
+```
+
 [🇺🇸 English version](README.md) · [🎥 Vídeo da apresentação](videos/apresentação.mp4)
 
-Este repositório replica o **Método de Polling** de Tan et al. no CIFAR-10 e introduz o **Efficient Polling**, uma extensão inédita que recupera o mesmo cronograma de taxa de aprendizado — e a mesma acurácia — fazendo poll em apenas **5% dos batches**, reduzindo os passos do otimizador em 75% e o tempo de parede por época em **3,3×**.
+Este repositório replica o **Método de Polling** de Tan et al. no CIFAR-10 e introduz o **Efficient Polling**, uma extensão inédita que recupera o mesmo cronograma de taxa de aprendizado — e a mesma acurácia — fazendo poll em apenas **5% dos batches**, reduzindo os passos do otimizador em 75% e o tempo de parede por época em **3,3×**. Ambos os métodos são distribuídos como um pacote PyTorch.
 
 ---
 
@@ -23,6 +31,67 @@ O **Efficient Polling** observa que a escolha do poll é altamente redundante �
 *150 épocas, seed única (42), uma execução totalmente reprodutível por método, NVIDIA RTX 5070.*
 
 O Efficient Polling **iguala** a acurácia do método base (dentro de 0,1 pp no teste) com apenas **12% acima do SGD puro** — contra os +264% do método base.
+
+---
+
+## Começando
+
+```bash
+pip install efficient-polling
+```
+
+O polling precisa reavaliar o modelo para pontuar um passo candidato, então, em vez do `optimizer.step()` puro, você passa uma **closure** que retorna `(loss, score)` — o mesmo contrato do `torch.optim.LBFGS`, mais o score a ser maximizado. O `make_closure` a constrói para você:
+
+```python
+import torch
+from efficient_polling import EfficientPollingSGD, make_closure
+
+model = MyModel().to(device)
+loss_fn = torch.nn.CrossEntropyLoss()
+
+# As LRs candidatas são, por padrão, {1e-5, 1e-4, 1e-3, 1e-2, 1e-1} em torno de lr.
+optimizer = EfficientPollingSGD(model, lr=1e-3)
+
+for inputs, targets in train_loader:
+    inputs, targets = inputs.to(device), targets.to(device)
+    info = optimizer.step(make_closure(model, loss_fn, inputs, targets))
+    # info.lr, info.loss, info.polled, info.spike, info.rolled_back, ...
+```
+
+Sem cronograma de taxa de aprendizado, sem warmup, sem tuning: a LR é *medida*. Troque `EfficientPollingSGD` por `PollingSGD` para o método base (poll a cada batch), ou envolva qualquer otimizador:
+
+```python
+from efficient_polling import EfficientPollingOptimizer
+
+optimizer = EfficientPollingOptimizer(
+    torch.optim.SGD(model.parameters(), lr=1e-3, momentum=0.9),
+    candidate_lrs=(1e-5, 1e-4, 1e-3, 1e-2, 1e-1),
+    module=model,          # para restaurar os buffers de BatchNorm entre os testes
+    max_poll_interval=64,  # teto do backoff; 0 faz poll a cada batch
+)
+```
+
+Os helpers opcionais de treino rodam uma comparação completa em poucas linhas e também aceitam um otimizador comum — assim o baseline passa pelo mesmo loop:
+
+```python
+from efficient_polling import fit
+
+history = fit(model, train_loader, val_loader, optimizer, loss_fn, epochs=150)
+print(history.best_val_acc, sum(history.polls), sum(history.optimizer_steps))
+```
+
+### API
+
+| Objeto | Papel |
+|---|---|
+| `EfficientPollingSGD` / `EfficientPollingOptimizer` | método proposto: poll sob demanda, com a guarda anti-divergência |
+| `PollingSGD` / `PollingOptimizer` | método base: poll a cada batch |
+| `make_closure`, `accuracy`, `negative_loss` | closure do batch e critérios de seleção (acurácia ou perda) |
+| `StepInfo`, `EpochStats`, `History` | telemetria: LR escolhida, polls, spikes, rollbacks, passos do otimizador |
+| `fit`, `train_epoch`, `evaluate` | helpers opcionais do loop de treino |
+| `StateSnapshot` | salvamento/restauração exata de parâmetros, buffers e estado do otimizador |
+
+**Observações.** As LRs candidatas são absolutas e aplicadas a *todos* os parameter groups, sobrescrevendo LRs por grupo. Passe `module=` (ou o próprio modelo como primeiro argumento) sempre que o forward mutar buffers, para que os testes não contaminem as estatísticas de BatchNorm. A closure não deve chamar `backward()` nem `zero_grad()` — quem cuida disso é o otimizador.
 
 ---
 
@@ -98,8 +167,17 @@ contra `528.000` do Polling base — uma redução de 75%, reproduzindo exatamen
 
 ```
 .
+├── src/efficient_polling/     # o pacote instalável
+│   ├── polling.py             # método base (Tan et al.)
+│   ├── efficient.py           # Efficient Polling (nosso)
+│   ├── _snapshot.py           # salvamento/restauração exata do estado nos testes
+│   ├── closures.py            # closures do batch e critérios de seleção
+│   └── training.py            # helpers opcionais fit/train_epoch/evaluate
+├── tests/                     # suíte pytest dos algoritmos
+├── examples/
+│   └── cifar10.py             # reproduz as três execuções do artigo via CLI
 ├── notebooks/
-│   └── cifar10.ipynb          # experimentos principais: dados, modelo, os 3 métodos, plots
+│   └── cifar10.ipynb          # experimentos originais: dados, modelo, os 3 métodos, plots
 ├── docs/
 │   ├── apresentacao_polling.pdf
 │   └── apresentacao_polling.pptx
@@ -107,34 +185,52 @@ contra `528.000` do Polling base — uma redução de 75%, reproduzindo exatamen
 │   └── apresentação.mp4       # vídeo da apresentação
 ├── images/                    # figuras usadas no artigo e neste README
 ├── models/                    # melhores checkpoints por método (.pt, gitignored)
+├── pyproject.toml
+├── CHANGELOG.md
 ├── README.md
 └── README(pt-br).md
 ```
 
 ## Configuração
 
-Requer Python 3.12+ (desenvolvido no 3.14) e uma GPU compatível com CUDA (CPU funciona, mas é lento).
+Para *usar* os métodos, basta o pacote (Python 3.10+, PyTorch 2.0+):
 
 ```bash
+pip install efficient-polling
+```
+
+Para *reproduzir os experimentos*, clone o repositório e instale com os extras. Uma GPU compatível com CUDA é recomendada (CPU funciona, mas é lento):
+
+```bash
+git clone https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks.git
+cd Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks
 python -m venv venv
 source venv/bin/activate
-pip install torch numpy matplotlib jupyter ipython
+pip install -e ".[dev,examples]" jupyter
 ```
 
 ### Conjunto de dados
 
-O notebook carrega a versão **CIFAR-10 Python** de um diretório local (os arquivos `data_batch_*` / `test_batch` em pickle). Baixe do [site oficial](https://www.cs.toronto.edu/~kriz/cifar.html):
+Os experimentos carregam a versão **CIFAR-10 Python** de um diretório local (os arquivos `data_batch_*` / `test_batch` em pickle). Baixe do [site oficial](https://www.cs.toronto.edu/~kriz/cifar.html):
 
 ```bash
 curl -O https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz
 tar -xzf cifar-10-python.tar.gz
 ```
 
-Depois aponte `DATA_DIR` (na célula **Constants** do notebook) para o diretório `cifar-10-batches-py` extraído.
-
 ## Execução
 
-Abra o notebook e rode as células de cima para baixo:
+O script de exemplo roda os três métodos e imprime a tabela comparativa:
+
+```bash
+python examples/cifar10.py --data-dir /caminho/para/cifar-10-batches-py
+# apenas um método, execução mais curta:
+python examples/cifar10.py --data-dir ... --methods efficient --epochs 20
+```
+
+Rode a suíte de testes com `pytest`.
+
+Como alternativa, abra o notebook original e rode as células de cima para baixo, apontando `DATA_DIR` (na célula **Constants**) para o diretório `cifar-10-batches-py` extraído:
 
 ```bash
 jupyter notebook notebooks/cifar10.ipynb
@@ -171,6 +267,8 @@ Se você usar este trabalho, cite o artigo:
 
 O método de Polling base é de Tan et al. (ver `docs/base_paper.pdf`).
 
+Para citar especificamente o software, acrescente `note = {Pacote Python \texttt{efficient-polling}}` ou referencie [o projeto no PyPI](https://pypi.org/project/efficient-polling/).
+
 ## 🧑‍💻 Autores
 
 | [<img src="https://github.com/luiz-linkezio.png" width=115><br><sub>Luiz Henrique</sub><br>](https://github.com/luiz-linkezio) <sub>Desenvolvedor</sub><br> <sub>[Linkedin](https://www.linkedin.com/in/lhbas/)</sub><br> <sub> Portfolio </sub> | [<img src="https://github.com/dev-joseronaldo.png" width=115><br><sub>José Ronaldo</sub><br>](https://github.com/Dev-JoseRonaldo) <sub>Desenvolvedor</sub><br> <sub>[Linkedin](https://www.linkedin.com/in/devjoseronaldo/)</sub><br> <sub>[Portfólio](https://joseronaldo.netlify.app/)</sub> |
@@ -180,4 +278,4 @@ Universidade Federal de Pernambuco, Recife, Brasil.
 
 ## Licença
 
-Distribuído sob os termos do arquivo [LICENSE](LICENSE) deste repositório.
+MIT — veja o arquivo [LICENSE](LICENSE) deste repositório.
