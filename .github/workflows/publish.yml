@@ -1,0 +1,51 @@
+name: Publish to PyPI
+
+# Publishes when a version tag is pushed (e.g. `git tag v0.1.0 && git push origin v0.1.0`),
+# or manually from the Actions tab.
+#
+# Uses PyPI Trusted Publishing — no API token needed. One-time setup on
+# https://pypi.org/manage/account/publishing/ for project `efficient-polling`:
+#   owner: luiz-linkezio
+#   repository: Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks
+#   workflow: publish.yml
+#   environment: pypi
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build distributions
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check --strict dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # required for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
