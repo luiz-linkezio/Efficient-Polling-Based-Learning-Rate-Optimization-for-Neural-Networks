@@ -1,13 +1,20 @@
 # Changelog
 
-All notable changes to the `efficient-polling` package are documented here.
+All notable changes to the `efficient-polling-lr-scheduler` package are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - 2026-07-29
+## [0.1.0] - 2026-07-30
 
 First release: the research code from `notebooks/cifar10.ipynb` extracted into an
 installable, tested library.
+
+> **Naming history.** This library was briefly published as `efficient-polling`
+> (also 0.1.0, import `efficient_polling`) before being renamed to
+> `efficient-polling-lr-scheduler` and republished. The old distribution was
+> removed from PyPI; nothing else changed, and the algorithms are identical.
+> Note that the classes are not `torch.optim.lr_scheduler.LRScheduler` subclasses
+> despite the name — they wrap the optimizer and run through `optimizer.step(closure)`.
 
 ### Added
 

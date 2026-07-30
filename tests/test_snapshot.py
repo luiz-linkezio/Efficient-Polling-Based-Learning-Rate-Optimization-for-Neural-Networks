@@ -4,7 +4,7 @@ import torch
 from torch import nn
 
 from conftest import BatchNormNet, TinyNet
-from efficient_polling import StateSnapshot
+from efficient_polling_lr_scheduler import StateSnapshot
 
 
 def test_restores_parameters_exactly(model: TinyNet, batch, loss_fn) -> None:

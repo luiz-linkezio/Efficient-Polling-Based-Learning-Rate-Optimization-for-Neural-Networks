@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "efficient-polling"
+name = "efficient-polling-lr-scheduler"
 dynamic = ["version"]
 description = "Polling-based learning-rate selection for PyTorch: the accuracy of per-batch LR polling at roughly the cost of plain SGD."
 readme = "README.md"
@@ -51,10 +51,10 @@ Issues = "https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate
 Changelog = "https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/CHANGELOG.md"
 
 [tool.hatch.version]
-path = "src/efficient_polling/__init__.py"
+path = "src/efficient_polling_lr_scheduler/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/efficient_polling"]
+packages = ["src/efficient_polling_lr_scheduler"]
 
 [tool.hatch.build.targets.sdist]
 include = [

@@ -12,7 +12,7 @@ base method's accuracy while polling ~5% of batches.
 
 Basic use::
 
-    from efficient_polling import EfficientPollingSGD, make_closure
+    from efficient_polling_lr_scheduler import EfficientPollingSGD, make_closure
 
     optimizer = EfficientPollingSGD(model, lr=1e-3)
 
