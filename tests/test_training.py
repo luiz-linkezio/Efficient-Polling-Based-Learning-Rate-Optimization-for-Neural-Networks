@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from conftest import TinyNet, make_loader
-from efficient_polling import (
+from efficient_polling_lr_scheduler import (
     EfficientPollingSGD,
     PollingSGD,
     evaluate,
@@ -41,7 +41,7 @@ def test_train_epoch_with_base_polling(loss_fn) -> None:
     assert stats.optimizer_steps == 5 * (3 + 1)
 
 
-def test_train_epoch_with_efficient_polling(loss_fn) -> None:
+def test_train_epoch_with_efficient_polling_lr_scheduler(loss_fn) -> None:
     model = TinyNet()
     loader = make_loader(n_batches=40)
     poller = EfficientPollingSGD(model, lr=1e-3)

@@ -100,7 +100,7 @@ class PollingOptimizer:
 
     This is the replicated base method: accurate, and it costs
     ``len(candidate_lrs) + 1`` optimizer steps per batch. See
-    :class:`~efficient_polling.efficient.EfficientPollingOptimizer` for the
+    :class:`~efficient_polling_lr_scheduler.efficient.EfficientPollingOptimizer` for the
     variant that polls on demand instead.
 
     Args:
@@ -197,7 +197,7 @@ class PollingOptimizer:
 
         Args:
             closure: re-evaluates the model, returning ``(loss, score)``. See
-                :class:`~efficient_polling.closures.Closure`.
+                :class:`~efficient_polling_lr_scheduler.closures.Closure`.
 
         Returns:
             A :class:`StepInfo` describing the step.

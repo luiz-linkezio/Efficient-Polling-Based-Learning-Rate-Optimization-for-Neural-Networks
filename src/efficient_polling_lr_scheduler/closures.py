@@ -64,7 +64,8 @@ def make_closure(
             Pass :func:`negative_loss` to select by loss instead.
 
     Returns:
-        A :class:`Closure` suitable for :meth:`~efficient_polling.polling.PollingOptimizer.step`.
+        A :class:`Closure` suitable for
+        :meth:`~efficient_polling_lr_scheduler.polling.PollingOptimizer.step`.
     """
     by_loss = score_fn is negative_loss
 

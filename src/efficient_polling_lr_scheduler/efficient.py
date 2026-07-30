@@ -109,7 +109,7 @@ class EfficientPollingOptimizer(PollingOptimizer):
 
         Args:
             closure: re-evaluates the model, returning ``(loss, score)``. See
-                :class:`~efficient_polling.closures.Closure`.
+                :class:`~efficient_polling_lr_scheduler.closures.Closure`.
 
         Returns:
             A :class:`StepInfo` describing what happened -- whether this batch was
