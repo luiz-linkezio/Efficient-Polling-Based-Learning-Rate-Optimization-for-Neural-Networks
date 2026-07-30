@@ -10,9 +10,16 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
+# Sem e-mail em nenhum autor de propósito: o PEP 621 manda quem tem e-mail para
+# `Author-email` e quem não tem para `Author`, o que faria o PyPI creditar apenas
+# um dos dois. Assim os dois nomes saem juntos em `Author`, e o contato vai em
+# `maintainers`.
 authors = [
-    { name = "Luiz Henrique", email = "luizlinkezio@gmail.com" },
+    { name = "Luiz Henrique" },
     { name = "José Ronaldo" },
+]
+maintainers = [
+    { name = "Luiz Henrique", email = "luizlinkezio@gmail.com" },
 ]
 keywords = [
     "pytorch",
