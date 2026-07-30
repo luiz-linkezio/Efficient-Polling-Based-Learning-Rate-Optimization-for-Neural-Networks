@@ -4,7 +4,7 @@ name: Publish to PyPI
 # or manually from the Actions tab.
 #
 # Uses PyPI Trusted Publishing — no API token needed. One-time setup on
-# https://pypi.org/manage/account/publishing/ for project `efficient-polling`:
+# https://pypi.org/manage/account/publishing/ for project `efficient-polling-lr-scheduler`:
 #   owner: luiz-linkezio
 #   repository: Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks
 #   workflow: publish.yml

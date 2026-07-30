@@ -7,7 +7,7 @@ import torch
 from torch import nn
 
 from conftest import TinyNet
-from efficient_polling import (
+from efficient_polling_lr_scheduler import (
     EfficientPollingOptimizer,
     EfficientPollingSGD,
     PollingSGD,

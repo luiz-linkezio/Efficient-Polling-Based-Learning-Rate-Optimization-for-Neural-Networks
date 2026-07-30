@@ -2,12 +2,12 @@
 
 > Get the accuracy of polling-based learning-rate selection at essentially the cost of plain SGD.
 
-[![PyPI](https://img.shields.io/pypi/v/efficient-polling.svg)](https://pypi.org/project/efficient-polling/)
-[![Python](https://img.shields.io/pypi/pyversions/efficient-polling.svg)](https://pypi.org/project/efficient-polling/)
-[![License](https://img.shields.io/pypi/l/efficient-polling.svg)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/efficient-polling-lr-scheduler.svg)](https://pypi.org/project/efficient-polling-lr-scheduler/)
+[![Python](https://img.shields.io/pypi/pyversions/efficient-polling-lr-scheduler.svg)](https://pypi.org/project/efficient-polling-lr-scheduler/)
+[![License](https://img.shields.io/pypi/l/efficient-polling-lr-scheduler.svg)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/LICENSE)
 
 ```bash
-pip install efficient-polling
+pip install efficient-polling-lr-scheduler
 ```
 
 [🇧🇷 Versão em português](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/README(pt-br).md) · [🎥 Presentation video](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/videos/apresentação.mp4)
@@ -37,14 +37,14 @@ Efficient Polling **matches** the base method's accuracy (within 0.1 pp on test)
 ## Quickstart
 
 ```bash
-pip install efficient-polling
+pip install efficient-polling-lr-scheduler
 ```
 
 Polling needs to re-evaluate the model to score a candidate step, so instead of the bare `optimizer.step()` you pass a **closure** that returns `(loss, score)` — the same contract as `torch.optim.LBFGS`, plus the score to maximize. `make_closure` builds it for you:
 
 ```python
 import torch
-from efficient_polling import EfficientPollingSGD, make_closure
+from efficient_polling_lr_scheduler import EfficientPollingSGD, make_closure
 
 model = MyModel().to(device)
 loss_fn = torch.nn.CrossEntropyLoss()
@@ -61,7 +61,7 @@ for inputs, targets in train_loader:
 No learning-rate schedule, no warmup, no tuning: the learning rate is *measured*. Swap `EfficientPollingSGD` for `PollingSGD` to get the base method (polls every batch), or wrap any optimizer you like:
 
 ```python
-from efficient_polling import EfficientPollingOptimizer
+from efficient_polling_lr_scheduler import EfficientPollingOptimizer
 
 optimizer = EfficientPollingOptimizer(
     torch.optim.SGD(model.parameters(), lr=1e-3, momentum=0.9),
@@ -74,7 +74,7 @@ optimizer = EfficientPollingOptimizer(
 The optional training helpers run a full comparison in a few lines, and accept a plain optimizer too — so the baseline goes through the same loop:
 
 ```python
-from efficient_polling import fit
+from efficient_polling_lr_scheduler import fit
 
 history = fit(model, train_loader, val_loader, optimizer, loss_fn, epochs=150)
 print(history.best_val_acc, sum(history.polls), sum(history.optimizer_steps))
@@ -91,7 +91,7 @@ print(history.best_val_acc, sum(history.polls), sum(history.optimizer_steps))
 | `fit`, `train_epoch`, `evaluate` | optional training loop helpers |
 | `StateSnapshot` | exact save/restore of parameters, buffers and optimizer state |
 
-**Notes.** Candidate learning rates are absolute and applied to every parameter group, overriding per-group learning rates. Pass `module=` (or the model itself as the first argument) whenever the forward pass mutates buffers, so trials cannot leak BatchNorm statistics. The closure must not call `backward()` or `zero_grad()` — the optimizer owns both.
+**Notes.** Despite the distribution name, these are **not** `torch.optim.lr_scheduler.LRScheduler` subclasses: they wrap the optimizer and are driven entirely through `optimizer.step(closure)`, so there is no separate `scheduler.step()` to call after it. Candidate learning rates are absolute and applied to every parameter group, overriding per-group learning rates. Pass `module=` (or the model itself as the first argument) whenever the forward pass mutates buffers, so trials cannot leak BatchNorm statistics. The closure must not call `backward()` or `zero_grad()` — the optimizer owns both.
 
 ---
 
@@ -167,7 +167,7 @@ versus `528,000` for base Polling — a 75% reduction, exactly reproducing the m
 
 ```
 .
-├── src/efficient_polling/     # the installable package
+├── src/efficient_polling_lr_scheduler/     # the installable package
 │   ├── polling.py             # base method (Tan et al.)
 │   ├── efficient.py           # Efficient Polling (ours)
 │   ├── _snapshot.py           # exact state save/restore for trial steps
@@ -196,7 +196,7 @@ versus `528,000` for base Polling — a 75% reduction, exactly reproducing the m
 To *use* the methods, all you need is the package (Python 3.10+, PyTorch 2.0+):
 
 ```bash
-pip install efficient-polling
+pip install efficient-polling-lr-scheduler
 ```
 
 To *reproduce the experiments*, clone the repository and install with the extras. A CUDA-capable GPU is recommended (CPU works but is slow):
@@ -256,7 +256,7 @@ The notebook is organized as: Imports → Constants → Configs (seed `42`, devi
 If you use this work, please cite the paper:
 
 ```bibtex
-@misc{henrique_efficient_polling,
+@misc{henrique_efficient_polling_lr_scheduler,
   title  = {Efficient Polling-Based Learning Rate Optimization for Neural Networks},
   author = {Henrique, Luiz and Ronaldo, Jos{\'e}},
   year   = {2026},
@@ -267,7 +267,7 @@ If you use this work, please cite the paper:
 
 The base Polling method is from Tan et al. (see `docs/base_paper.pdf`).
 
-To cite the software specifically, add `note = {Python package \texttt{efficient-polling}}` or reference [the PyPI project](https://pypi.org/project/efficient-polling/).
+To cite the software specifically, add `note = {Python package \texttt{efficient-polling-lr-scheduler}}` or reference [the PyPI project](https://pypi.org/project/efficient-polling-lr-scheduler/).
 
 ## 🧑‍💻 Authors
 

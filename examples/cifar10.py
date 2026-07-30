@@ -12,7 +12,7 @@ https://www.cs.toronto.edu/~kriz/cifar.html:
     curl -O https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz
     tar -xzf cifar-10-python.tar.gz
 
-Requires the ``examples`` extra: ``pip install "efficient-polling[examples]"``.
+Requires the ``examples`` extra: ``pip install "efficient-polling-lr-scheduler[examples]"``.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset, random_split
 
-from efficient_polling import EfficientPollingSGD, PollingSGD, evaluate, fit
+from efficient_polling_lr_scheduler import EfficientPollingSGD, PollingSGD, evaluate, fit
 
 METHODS = ("baseline", "polling", "efficient")
 
