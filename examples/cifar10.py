@@ -1,10 +1,21 @@
 """Reproduce the paper's CIFAR-10 comparison from the command line.
 
-Mirrors ``notebooks/cifar10.ipynb``: the same 5-layer CNN (557,898 parameters,
-no batch norm or dropout, so the optimizer is the only source of adaptation),
-vanilla SGD, batch size 64, base learning rate 1e-3, seed 42.
+The single source of truth for every number in the paper: all methods run
+through the same :func:`fit` loop, on the same measurement convention (batch
+loss and accuracy are recorded at the point where the gradient was taken,
+before the step) and the same cost accounting, so the accuracy, optimizer-step
+and wall-clock columns of a table always come from one implementation.
 
-    python examples/cifar10.py --data-dir /path/to/cifar-10-batches-py
+The same 5-layer CNN (557,898 parameters, no batch norm or dropout, so the
+optimizer is the only source of adaptation), vanilla SGD, batch size 64, base
+learning rate 1e-3.
+
+    python examples/cifar10.py --data-dir /path/to/cifar-10-batches-py \\
+        --seeds 42 43 44 45 46
+
+Each (method, seed) run is written to ``--results-dir`` as JSON and skipped on
+a later invocation, so a long sweep can be interrupted and resumed. Results are
+reported as mean +- sample standard deviation over the seeds.
 
 Get the data (the *CIFAR-10 python* version) from
 https://www.cs.toronto.edu/~kriz/cifar.html:
@@ -18,19 +29,57 @@ Requires the ``examples`` extra: ``pip install "efficient-polling-lr-scheduler[e
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import pickle
+import statistics
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset, random_split
 
-from efficient_polling_lr_scheduler import EfficientPollingSGD, PollingSGD, evaluate, fit
+from efficient_polling_lr_scheduler import (
+    SPSSGD,
+    ArmijoSGD,
+    EfficientPollingSGD,
+    PollingSGD,
+    evaluate,
+    fit,
+)
 
-METHODS = ("baseline", "polling", "efficient")
+# Ordered so the three methods the paper's claim rests on run first: an
+# interrupted sweep still leaves the core comparison complete.
+METHODS = (
+    "baseline",
+    "polling",
+    "efficient",
+    "adam",
+    "cosine",
+    "step",
+    "plateau",
+    "sps",
+    "armijo",
+    "efficient_fixed",
+    "efficient_random",
+)
+
+LABELS = {
+    "baseline": "SGD (fixed 1e-3)",
+    "polling": "Polling (base paper)",
+    "efficient": "Efficient Polling (ours)",
+    "adam": "Adam (1e-3)",
+    "cosine": "SGD + cosine annealing",
+    "step": "SGD + step decay",
+    "plateau": "SGD + ReduceLROnPlateau",
+    "sps": "SPS (Polyak)",
+    "armijo": "Armijo line search",
+    "efficient_fixed": "  ablation: fixed interval",
+    "efficient_random": "  ablation: random trigger",
+}
 
 
 def _load_cifar_batch(path: Path) -> tuple[np.ndarray, np.ndarray]:
@@ -123,10 +172,11 @@ class SimpleCIFAR10CNN(nn.Module):
         return self.net(x)
 
 
-def build_loaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader, DataLoader]:
+def build_loaders(args: argparse.Namespace, seed: int) -> tuple[DataLoader, DataLoader, DataLoader]:
+    """Loaders for one seed. The train/val split follows the seed, so the seeds
+    vary the split as well as the initialization."""
     data_dir = Path(args.data_dir)
     mean, std = compute_mean_std(CIFAR10Dataset(data_dir, train=True))
-    print(f"channel mean {mean.squeeze().tolist()} std {std.squeeze().tolist()}")
 
     full_train = CIFAR10Dataset(data_dir, train=True, mean=mean, std=std)
     test_ds = CIFAR10Dataset(data_dir, train=False, mean=mean, std=std)
@@ -135,7 +185,7 @@ def build_loaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader, Dat
     train_ds, val_ds = random_split(
         full_train,
         [len(full_train) - val_size, val_size],
-        generator=torch.Generator().manual_seed(args.seed),
+        generator=torch.Generator().manual_seed(seed),
     )
 
     common = {"batch_size": args.batch_size, "num_workers": args.num_workers}
@@ -146,38 +196,81 @@ def build_loaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader, Dat
     )
 
 
-def build_optimizer(method: str, model: nn.Module, args: argparse.Namespace):
+def build_optimizer(method: str, model: nn.Module, args: argparse.Namespace, seed: int):
+    """Returns ``(optimizer, scheduler)``; ``scheduler`` is ``None`` for most methods."""
     if method == "baseline":
-        return torch.optim.SGD(model.parameters(), lr=args.lr)
+        return torch.optim.SGD(model.parameters(), lr=args.lr), None
+    if method == "adam":
+        return torch.optim.Adam(model.parameters(), lr=args.lr), None
+    if method == "cosine":
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.scheduled_lr)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+        return optimizer, scheduler
+    if method == "step":
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.scheduled_lr)
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=args.step_size, gamma=args.step_gamma
+        )
+        return optimizer, scheduler
+    if method == "plateau":
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.scheduled_lr)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.5, patience=5
+        )
+        return optimizer, scheduler
+    if method == "sps":
+        return SPSSGD(model, lr=args.lr, max_lr=args.sps_max_lr), None
+    if method == "armijo":
+        return (
+            ArmijoSGD(
+                model,
+                lr=args.lr,
+                lr_max=args.armijo_lr_max,
+                alpha=args.armijo_alpha,
+                beta=args.armijo_beta,
+                max_iters=args.armijo_max_iters,
+            ),
+            None,
+        )
     if method == "polling":
-        return PollingSGD(model, lr=args.lr)
+        return PollingSGD(model, lr=args.lr), None
     # The paper pins the rollback threshold at twice the random-guess loss for
     # ten classes; passing it explicitly keeps the run bit-comparable.
-    return EfficientPollingSGD(
-        model,
-        lr=args.lr,
-        max_poll_interval=args.max_poll_interval,
-        spike_factor=args.spike_factor,
-        loss_ema_beta=args.loss_ema_beta,
-        rollback_loss=2.0 * math.log(10),
-    )
+    #
+    # The two ablations change the trigger and nothing else, both calibrated to
+    # --poll-rate so they poll as often as the backoff variant does.
+    kwargs: dict[str, Any] = {
+        "spike_factor": args.spike_factor,
+        "loss_ema_beta": args.loss_ema_beta,
+        "rollback_loss": 2.0 * math.log(10),
+    }
+    if method == "efficient":
+        kwargs["max_poll_interval"] = args.max_poll_interval
+    elif method == "efficient_fixed":
+        kwargs.update(trigger="fixed", max_poll_interval=round(1 / args.poll_rate) - 1)
+    elif method == "efficient_random":
+        # Seeded per run, and private, so the trigger never shifts batch order.
+        kwargs.update(trigger="random", poll_probability=args.poll_rate, poll_seed=seed)
+    else:
+        raise ValueError(f"unknown method: {method}")
+    return EfficientPollingSGD(model, lr=args.lr, **kwargs), None
 
 
-def run(method: str, args: argparse.Namespace, loaders) -> dict[str, float]:
+def run(method: str, seed: int, args: argparse.Namespace, loaders) -> dict:
     train_loader, val_loader, test_loader = loaders
     device = torch.device(args.device)
 
     # Same seed for every method, so they differ only in learning-rate logic.
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
 
     model = SimpleCIFAR10CNN().to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    optimizer = build_optimizer(method, model, args)
+    optimizer, scheduler = build_optimizer(method, model, args, seed)
     loss_fn = nn.CrossEntropyLoss()
-    checkpoint = Path(args.models_dir) / f"cifar10_best_{method}.pt"
+    checkpoint = Path(args.models_dir) / f"cifar10_best_{method}_seed{seed}.pt"
 
-    print(f"\n=== {method} | {n_params:,} parameters | {device} ===")
+    print(f"\n=== {method} | seed {seed} | {n_params:,} parameters | {device} ===", flush=True)
     started = time.perf_counter()
     history = fit(
         model,
@@ -188,6 +281,7 @@ def run(method: str, args: argparse.Namespace, loaders) -> dict[str, float]:
         epochs=args.epochs,
         device=device,
         checkpoint_path=checkpoint,
+        scheduler=scheduler,
     )
     elapsed = time.perf_counter() - started
 
@@ -197,21 +291,45 @@ def run(method: str, args: argparse.Namespace, loaders) -> dict[str, float]:
     total_polls = sum(history.polls)
     total_batches = args.epochs * len(train_loader)
     print(
-        f"{method}: best val {history.best_val_acc:.4f} | "
+        f"{method} seed {seed}: best val {history.best_val_acc:.4f} | "
         f"test loss {test_loss:.4f} acc {test_acc:.4f} | "
         f"{elapsed / args.epochs:.2f} s/epoch | "
         f"polls {total_polls}/{total_batches} | "
-        f"steps {sum(history.optimizer_steps)} | rollbacks {sum(history.rollbacks)}"
+        f"steps {sum(history.optimizer_steps)} | rollbacks {sum(history.rollbacks)}",
+        flush=True,
     )
 
     return {
+        "method": method,
+        "seed": seed,
+        "epochs": args.epochs,
         "best_val": history.best_val_acc,
+        "best_epoch": history.best_epoch,
         "test_acc": test_acc,
         "test_loss": test_loss,
         "s_per_epoch": elapsed / args.epochs,
+        "total_seconds": elapsed,
         "poll_fraction": total_polls / total_batches if total_batches else 0.0,
         "steps": sum(history.optimizer_steps),
+        "batches": total_batches,
+        "rollbacks": sum(history.rollbacks),
+        "spikes": sum(history.spikes),
+        # Kept so the figures can be redrawn from the recorded runs alone.
+        "history": history.as_dict(),
     }
+
+
+def result_path(args: argparse.Namespace, method: str, seed: int) -> Path:
+    return Path(args.results_dir) / f"{method}_seed{seed}.json"
+
+
+def summarize(values: list[float]) -> tuple[float, float]:
+    """Mean and sample standard deviation (zero for a single run)."""
+    if not values:
+        return math.nan, math.nan
+    if len(values) == 1:
+        return values[0], 0.0
+    return statistics.fmean(values), statistics.stdev(values)
 
 
 def parse_args() -> argparse.Namespace:
@@ -223,29 +341,110 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=150)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--seeds",
+        nargs="+",
+        type=int,
+        default=[42],
+        help="one run per seed per method; results are reported as mean +- stdev",
+    )
     parser.add_argument("--val-fraction", type=float, default=0.1)
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--models-dir", default="models")
+    parser.add_argument("--results-dir", default="results/cifar10")
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="re-run (method, seed) pairs that already have a result file",
+    )
     parser.add_argument("--max-poll-interval", type=int, default=64)
     parser.add_argument("--spike-factor", type=float, default=3.0)
     parser.add_argument("--loss-ema-beta", type=float, default=0.9)
+    parser.add_argument(
+        "--poll-rate",
+        type=float,
+        default=0.05,
+        help="poll rate the two trigger ablations are calibrated to, so they poll "
+        "as often as the backoff variant measured and the comparison is about "
+        "the trigger rather than the budget",
+    )
+    parser.add_argument(
+        "--scheduled-lr",
+        type=float,
+        default=1e-1,
+        help="initial LR for the cosine, step and plateau schedules, whose whole "
+        "point is to start high and decay (the top of the polling candidate set)",
+    )
+    parser.add_argument("--step-size", type=int, default=50)
+    parser.add_argument("--step-gamma", type=float, default=0.1)
+    parser.add_argument(
+        "--sps-max-lr",
+        type=float,
+        default=0.1,
+        help="cap on the Polyak step. Set to the top of the polling candidate set, "
+        "the same upper bound Armijo searches from, so no adaptive method may "
+        "take a step the others were never allowed to consider. Uncapped (the "
+        "literature's 10.0) the rule saturates from the first batch on this model",
+    )
+    parser.add_argument("--armijo-lr-max", type=float, default=0.1)
+    parser.add_argument("--armijo-alpha", type=float, default=1e-4)
+    parser.add_argument("--armijo-beta", type=float, default=0.5)
+    parser.add_argument("--armijo-max-iters", type=int, default=10)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    loaders = build_loaders(args)
-    results = {method: run(method, args, loaders) for method in args.methods}
+    Path(args.results_dir).mkdir(parents=True, exist_ok=True)
 
-    print("\n| Method | Best Val | Test Acc | Test Loss | Polled | s/Epoch |")
-    print("|---|---|---|---|---|---|")
-    for method, r in results.items():
-        polled = "—" if method == "baseline" else f"{r['poll_fraction']:.2%}"
+    for seed in args.seeds:
+        pending = [
+            m for m in args.methods if args.overwrite or not result_path(args, m, seed).exists()
+        ]
+        if not pending:
+            print(f"seed {seed}: every method already has a result, skipping")
+            continue
+
+        # One set of loaders per seed, shared by every method of that seed.
+        loaders = build_loaders(args, seed)
+        for method in pending:
+            result = run(method, seed, args, loaders)
+            result_path(args, method, seed).write_text(json.dumps(result, indent=2))
+
+    report(args)
+
+
+def report(args: argparse.Namespace) -> None:
+    """Aggregate whatever result files exist into the paper's table."""
+    print(f"\n### CIFAR-10, {args.epochs} epochs, mean +- stdev over seeds\n")
+    print("| Method | Best Val | Test Acc | Test Loss | Polled | Steps | s/Epoch | Seeds |")
+    print("|---|---|---|---|---|---|---|---|")
+
+    for method in args.methods:
+        runs = [
+            json.loads(result_path(args, method, seed).read_text())
+            for seed in args.seeds
+            if result_path(args, method, seed).exists()
+        ]
+        if not runs:
+            continue
+
+        val_m, val_s = summarize([r["best_val"] for r in runs])
+        acc_m, acc_s = summarize([r["test_acc"] for r in runs])
+        loss_m, loss_s = summarize([r["test_loss"] for r in runs])
+        sec_m, sec_s = summarize([r["s_per_epoch"] for r in runs])
+        poll_m, _ = summarize([r["poll_fraction"] for r in runs])
+        steps_m, _ = summarize([float(r["steps"]) for r in runs])
+
+        polled = f"{poll_m:.2%}" if poll_m else "—"
         print(
-            f"| {method} | {r['best_val']:.2%} | {r['test_acc']:.2%} | "
-            f"{r['test_loss']:.4f} | {polled} | {r['s_per_epoch']:.2f} |"
+            f"| {LABELS.get(method, method)} "
+            f"| {val_m:.2%} ± {val_s:.2%} "
+            f"| {acc_m:.2%} ± {acc_s:.2%} "
+            f"| {loss_m:.4f} ± {loss_s:.4f} "
+            f"| {polled} | {steps_m:,.0f} "
+            f"| {sec_m:.2f} ± {sec_s:.2f} | {len(runs)} |"
         )
 
 
