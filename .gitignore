@@ -21,3 +21,5 @@ build/
 .ruff_cache/
 .mypy_cache/
 .ipynb_checkpoints/
+
+*.tex
