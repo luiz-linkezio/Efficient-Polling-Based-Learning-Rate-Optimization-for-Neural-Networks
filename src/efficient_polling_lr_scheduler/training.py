@@ -184,6 +184,7 @@ def fit(
     score_fn: ScoreFn = accuracy,
     checkpoint_path: str | Path | None = None,
     log_fn: Callable[[str], None] | None = print,
+    scheduler: Any | None = None,
 ) -> History:
     """Train for ``epochs``, tracking the best validation score.
 
@@ -199,6 +200,11 @@ def fit(
         checkpoint_path: where to write ``state_dict()`` whenever the validation
             score improves. ``None`` disables checkpointing.
         log_fn: per-epoch line printer; ``None`` silences it.
+        scheduler: optional ``torch.optim.lr_scheduler`` stepped once per epoch,
+            after validation. :class:`~torch.optim.lr_scheduler.ReduceLROnPlateau`
+            receives the validation loss; any other scheduler is stepped with no
+            argument. Only meaningful for a plain optimizer -- a polling
+            optimizer overwrites the learning rate every time it polls.
 
     Returns:
         The :class:`History` of the run.
@@ -227,6 +233,12 @@ def fit(
             history.best_epoch = epoch
             if path is not None:
                 torch.save(model.state_dict(), path)
+
+        if scheduler is not None:
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step(val_loss)
+            else:
+                scheduler.step()
 
         if log_fn is not None:
             line = (
