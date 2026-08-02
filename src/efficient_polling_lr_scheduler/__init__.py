@@ -25,7 +25,7 @@ from __future__ import annotations
 from ._snapshot import StateSnapshot
 from .baselines import SPSSGD, ArmijoOptimizer, ArmijoSGD, SPSOptimizer
 from .closures import Closure, ScoreFn, accuracy, make_closure, negative_loss
-from .efficient import EfficientPollingOptimizer, EfficientPollingSGD
+from .efficient import TRIGGERS, EfficientPollingOptimizer, EfficientPollingSGD
 from .polling import (
     PollingOptimizer,
     PollingSGD,
@@ -53,6 +53,7 @@ __all__ = [
     "ScoreFn",
     "StateSnapshot",
     "StepInfo",
+    "TRIGGERS",
     "__version__",
     "accuracy",
     "default_candidate_lrs",
