@@ -4,6 +4,44 @@ All notable changes to the `efficient-polling-lr-scheduler` package are document
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-08-03
+
+### Changed
+
+- README.md and README(pt-br).md rewritten to match `docs/main.tex`: the
+  five-seed, eleven-configuration study (replacing the single-seed, three-method
+  numbers from 0.1.0), the full comparison table, the cost model, the
+  divergence-guard statistics and the trigger-ablation results. No code changes.
+
+## [1.0.0] - 2026-08-02
+
+### Added
+
+- `SPSSGD` / `SPSOptimizer` — comparison baseline implementing the stochastic
+  Polyak step-size.
+- `ArmijoSGD` / `ArmijoOptimizer` — comparison baseline implementing stochastic
+  Armijo backtracking line search.
+- `trigger` parameter on `EfficientPollingOptimizer`/`EfficientPollingSGD`,
+  exposed as `TRIGGERS = ("backoff", "fixed", "random")`: `"fixed"` and
+  `"random"` are budget-matched ablations of the adaptive backoff trigger,
+  used to isolate the contribution of the trigger from the poll budget itself.
+- `fit`/`train_epoch` accept an optional `torch.optim.lr_scheduler`, so Adam
+  and the standard schedulers (cosine annealing, step decay,
+  ReduceLROnPlateau) run through the same training loop as the polling
+  methods.
+- `examples/plot_results.py` — redraws the paper's figures directly from the
+  JSON files `examples/cifar10.py` records, so a plot can never disagree with
+  the reported table.
+
+### Changed
+
+- `examples/cifar10.py` now runs all eleven configurations (the two polling
+  methods, six comparison methods and two trigger ablations) over multiple
+  seeds via `--seeds`, instead of a single-seed, three-method run.
+- `notebooks/cifar10.ipynb` reworked around one shared training loop for all
+  eleven configurations over five seeds (42–46), replacing the original
+  single-seed, three-method notebook.
+
 ## [0.1.0] - 2026-07-30
 
 First release: the research code from `notebooks/cifar10.ipynb` extracted into an
