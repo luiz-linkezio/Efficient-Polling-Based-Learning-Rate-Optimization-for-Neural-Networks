@@ -23,8 +23,9 @@ Basic use::
 from __future__ import annotations
 
 from ._snapshot import StateSnapshot
+from .baselines import SPSSGD, ArmijoOptimizer, ArmijoSGD, SPSOptimizer
 from .closures import Closure, ScoreFn, accuracy, make_closure, negative_loss
-from .efficient import EfficientPollingOptimizer, EfficientPollingSGD
+from .efficient import TRIGGERS, EfficientPollingOptimizer, EfficientPollingSGD
 from .polling import (
     PollingOptimizer,
     PollingSGD,
@@ -37,6 +38,8 @@ from .training import EpochStats, History, evaluate, fit, train_epoch
 __version__ = "0.1.0"
 
 __all__ = [
+    "ArmijoOptimizer",
+    "ArmijoSGD",
     "Closure",
     "EfficientPollingOptimizer",
     "EfficientPollingSGD",
@@ -45,9 +48,12 @@ __all__ = [
     "PollResult",
     "PollingOptimizer",
     "PollingSGD",
+    "SPSOptimizer",
+    "SPSSGD",
     "ScoreFn",
     "StateSnapshot",
     "StepInfo",
+    "TRIGGERS",
     "__version__",
     "accuracy",
     "default_candidate_lrs",

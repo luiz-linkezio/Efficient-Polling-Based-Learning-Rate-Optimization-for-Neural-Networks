@@ -373,3 +373,136 @@ def test_state_dict_preserves_the_schedule(scripted) -> None:
     assert restored.signal_seen == poller.signal_seen
     assert restored.ema_loss == pytest.approx(poller.ema_loss)
     assert restored.rollback_loss == pytest.approx(poller.rollback_loss)
+
+
+# -- trigger ablation ------------------------------------------------------
+
+
+def test_fixed_trigger_ignores_a_stable_selection(batch) -> None:
+    """The backoff variant would double its interval here; this one must not."""
+    inputs, _ = batch
+    model = TinyNet()
+    poller = EfficientPollingSGD(
+        model, lr=1e-3, candidate_lrs=(1e-4, 1e-3), max_poll_interval=4, trigger="fixed"
+    )
+    closure = Scripted(model, poller.optimizer, inputs, winner=1e-3)
+
+    polled = [poller.step(closure).polled for _ in range(21)]
+
+    assert poller.poll_interval == 4
+    assert polled == [i % 5 == 0 for i in range(21)]
+
+
+def test_fixed_trigger_returns_to_its_interval_after_a_rollback(batch) -> None:
+    """A rollback must not strand the fixed variant at one poll per batch."""
+    inputs, _ = batch
+    model = TinyNet()
+    poller = EfficientPollingSGD(
+        model,
+        lr=1e-3,
+        candidate_lrs=(1e-4, 1e-3),
+        max_poll_interval=4,
+        trigger="fixed",
+        rollback_loss=10.0,
+    )
+    closure = Scripted(model, poller.optimizer, inputs, winner=1e-3)
+    poller.step(closure)
+
+    closure.loss = 1e3
+    assert poller.step(closure).rolled_back
+    closure.loss = 1.0
+
+    polled = [poller.step(closure).polled for _ in range(11)]
+    assert polled[0], "the batch after a rollback is polled by every trigger"
+    assert polled == [i % 5 == 0 for i in range(11)]
+
+
+def test_random_trigger_polls_at_about_its_probability(batch) -> None:
+    inputs, _ = batch
+    model = TinyNet()
+    poller = EfficientPollingSGD(
+        model,
+        lr=1e-3,
+        candidate_lrs=(1e-4, 1e-3),
+        trigger="random",
+        poll_probability=0.2,
+        poll_seed=0,
+        spike_factor=0.0,  # spikes would add polls the trigger did not ask for
+    )
+    closure = Scripted(model, poller.optimizer, inputs, winner=1e-3)
+
+    polled = [poller.step(closure).polled for _ in range(1000)]
+
+    assert polled[0], "the first batch is polled, so there is a selection to reuse"
+    assert 0.15 < sum(polled) / len(polled) < 0.25
+
+
+def test_random_trigger_is_reproducible_and_seed_dependent(batch) -> None:
+    inputs, _ = batch
+
+    def run(poll_seed: int) -> list[bool]:
+        torch.manual_seed(7)
+        model = TinyNet()
+        poller = EfficientPollingSGD(
+            model,
+            lr=1e-3,
+            candidate_lrs=(1e-4, 1e-3),
+            trigger="random",
+            poll_probability=0.3,
+            poll_seed=poll_seed,
+            spike_factor=0.0,
+        )
+        closure = Scripted(model, poller.optimizer, inputs, winner=1e-3)
+        return [poller.step(closure).polled for _ in range(200)]
+
+    assert run(0) == run(0)
+    assert run(0) != run(1)
+
+
+def test_random_trigger_does_not_disturb_the_global_rng(batch) -> None:
+    """Batch order must not depend on which trigger the run uses."""
+    inputs, _ = batch
+    model = TinyNet()
+    poller = EfficientPollingSGD(
+        model, lr=1e-3, candidate_lrs=(1e-4, 1e-3), trigger="random", poll_probability=0.5
+    )
+    closure = Scripted(model, poller.optimizer, inputs, winner=1e-3)
+
+    torch.manual_seed(11)
+    for _ in range(50):
+        poller.step(closure)
+    after = torch.rand(3)
+
+    torch.manual_seed(11)
+    assert torch.equal(after, torch.rand(3))
+
+
+def test_random_trigger_state_dict_resumes_the_same_draws(batch) -> None:
+    inputs, _ = batch
+    model = TinyNet()
+    kwargs = dict(
+        lr=1e-3,
+        candidate_lrs=(1e-4, 1e-3),
+        trigger="random",
+        poll_probability=0.3,
+        spike_factor=0.0,
+    )
+    poller = EfficientPollingSGD(model, **kwargs)
+    closure = Scripted(model, poller.optimizer, inputs, winner=1e-3)
+    for _ in range(30):
+        poller.step(closure)
+
+    restored = EfficientPollingSGD(TinyNet(), **kwargs)
+    restored.load_state_dict(poller.state_dict())
+
+    assert [restored._rng.random() for _ in range(10)] == [poller._rng.random() for _ in range(10)]
+
+
+def test_rejects_an_unknown_trigger(model: TinyNet) -> None:
+    with pytest.raises(ValueError, match="trigger"):
+        EfficientPollingSGD(model, lr=1e-3, trigger="backoff_")
+
+
+def test_rejects_an_out_of_range_poll_probability(model: TinyNet) -> None:
+    with pytest.raises(ValueError, match="poll_probability"):
+        EfficientPollingSGD(model, lr=1e-3, trigger="random", poll_probability=0.0)

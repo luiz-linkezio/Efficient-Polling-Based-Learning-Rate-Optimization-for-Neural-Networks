@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import random
 from collections.abc import Iterable
 from typing import Any
 
@@ -14,7 +15,12 @@ from ._snapshot import StateSnapshot
 from .closures import Closure
 from .polling import PollingOptimizer, StepInfo, _split_module
 
-__all__ = ["EfficientPollingOptimizer", "EfficientPollingSGD"]
+__all__ = ["TRIGGERS", "EfficientPollingOptimizer", "EfficientPollingSGD"]
+
+#: Rules that decide *when* to poll. ``"backoff"`` is the method; the other two
+#: exist so an ablation can show that the adaptive trigger is what pays off,
+#: rather than the mere fact of polling less often.
+TRIGGERS = ("backoff", "fixed", "random")
 
 
 class EfficientPollingOptimizer(PollingOptimizer):
@@ -45,6 +51,18 @@ class EfficientPollingOptimizer(PollingOptimizer):
     On CIFAR-10 this reaches the base method's accuracy while polling ~5% of
     batches, at ~12% over plain SGD instead of +264%.
 
+    **Trigger ablation.** ``trigger`` replaces rule 1 without touching rule 2 or
+    the selection itself, so the three variants differ only in *when* they poll:
+
+    * ``"backoff"`` -- the method described above.
+    * ``"fixed"`` -- poll every ``max_poll_interval + 1`` batches, come what may.
+    * ``"random"`` -- poll each batch with probability ``poll_probability``.
+
+    Calibrate the two controls to the polling rate the backoff run actually
+    measured (``max_poll_interval = 1/rate - 1``, ``poll_probability = rate``);
+    matched rates are what makes the comparison about the trigger rather than
+    about how much polling each variant bought.
+
     Args:
         optimizer: the optimizer whose ``lr`` is polled.
         candidate_lrs: learning rates to poll. See :class:`PollingOptimizer`.
@@ -53,7 +71,15 @@ class EfficientPollingOptimizer(PollingOptimizer):
         max_poll_interval: backoff cap ``K_max``, counted in *blind steps between
             polls*, so the steady state is one poll every ``K_max + 1`` batches
             (~11 polls per CIFAR-10 epoch at the default 64). ``0`` polls every
-            batch, recovering the base method.
+            batch, recovering the base method. Under ``trigger="fixed"`` this is
+            not a cap but the interval itself.
+        trigger: which rule schedules the polls; one of :data:`TRIGGERS`. The
+            ablation controls are not the method -- leave this at ``"backoff"``
+            unless you are measuring what the backoff contributes.
+        poll_probability: poll rate for ``trigger="random"``, ignored otherwise.
+        poll_seed: seeds the private RNG of ``trigger="random"``. Private so a
+            run's batch order is the same whichever trigger it uses, which the
+            global RNG could not give.
         spike_factor: spike threshold ``gamma`` on the loss EMA. Non-positive
             disables the spike tier.
         loss_ema_beta: EMA decay ``beta`` for the tracked loss.
@@ -76,6 +102,9 @@ class EfficientPollingOptimizer(PollingOptimizer):
         loss_ema_beta: float = 0.9,
         rollback_loss: float | None = None,
         rollback_factor: float = 2.0,
+        trigger: str = "backoff",
+        poll_probability: float = 0.05,
+        poll_seed: int = 0,
     ) -> None:
         super().__init__(optimizer, candidate_lrs=candidate_lrs, module=module)
 
@@ -85,15 +114,23 @@ class EfficientPollingOptimizer(PollingOptimizer):
             raise ValueError(f"loss_ema_beta must be in [0, 1), got {loss_ema_beta}")
         if rollback_loss is not None and not math.isfinite(rollback_loss):
             raise ValueError("rollback_loss must be finite, or None to derive it")
+        if trigger not in TRIGGERS:
+            raise ValueError(f"trigger must be one of {TRIGGERS}, got {trigger!r}")
+        if not 0.0 < poll_probability <= 1.0:
+            raise ValueError(f"poll_probability must be in (0, 1], got {poll_probability}")
 
         self.max_poll_interval = int(max_poll_interval)
         self.spike_factor = float(spike_factor)
         self.loss_ema_beta = float(loss_ema_beta)
         self.rollback_factor = float(rollback_factor)
+        self.trigger = trigger
+        self.poll_probability = float(poll_probability)
 
         self._rollback_loss = None if rollback_loss is None else float(rollback_loss)
+        self._rng = random.Random(poll_seed)
         self.poll_interval = self._reset_interval()
-        self.since_poll = max(1, self.poll_interval)  # so the first batch polls
+        self.since_poll = max(1, self.poll_interval)
+        self._force_poll = True  # every trigger polls its first batch
         self.last_lr: float | None = None
         self.signal_seen = False
         self.ema_loss: float | None = None
@@ -128,6 +165,7 @@ class EfficientPollingOptimizer(PollingOptimizer):
                 self._checkpoint.restore()
             self.poll_interval = self._reset_interval()
             self.since_poll = max(1, self.poll_interval)
+            self._force_poll = True
             return StepInfo(
                 lr=self.lr,
                 loss=loss_value,
@@ -148,7 +186,7 @@ class EfficientPollingOptimizer(PollingOptimizer):
             and loss_value > self.spike_factor * self.ema_loss
         )
 
-        if spike or self.since_poll >= self.poll_interval:
+        if spike or self._should_poll():
             info = self._polled_step(closure, loss_value, score, spike)
         else:
             self.optimizer.step()
@@ -171,12 +209,24 @@ class EfficientPollingOptimizer(PollingOptimizer):
 
     # -- internals ---------------------------------------------------------
 
+    def _should_poll(self) -> bool:
+        """Whether this batch is polled, spikes aside -- rule 1 and its ablations."""
+        if self._force_poll:
+            return True
+        if self.trigger == "random":
+            return self._rng.random() < self.poll_probability
+        return self.since_poll >= self.poll_interval
+
     def _polled_step(
         self, closure: Closure, loss_value: float, score: float, spike: bool
     ) -> StepInfo:
         poll = self.poll(closure)
 
-        if not self.signal_seen:
+        if self.trigger != "backoff":
+            # The ablation controls hold their schedule regardless of what the
+            # poll found; that indifference is the thing being ablated.
+            pass
+        elif not self.signal_seen:
             # Nothing to back off from yet: ties everywhere carry no information.
             self.signal_seen = poll.had_signal
             self.poll_interval = self._reset_interval()
@@ -187,6 +237,7 @@ class EfficientPollingOptimizer(PollingOptimizer):
 
         self.last_lr = poll.lr
         self.since_poll = 0
+        self._force_poll = False
 
         # This point is known good, so it doubles as the rollback checkpoint.
         if self._checkpoint is None:
@@ -214,7 +265,14 @@ class EfficientPollingOptimizer(PollingOptimizer):
         self._checkpoint = None
 
     def _reset_interval(self) -> int:
-        """Interval after an unstable poll: every batch, unless K_max forbids it."""
+        """Interval after an unstable poll: every batch, unless K_max forbids it.
+
+        ``trigger="fixed"`` has no unstable state to fall back to -- its interval
+        is the constant being tested, so a rollback must not leave it polling
+        every batch for the rest of training.
+        """
+        if self.trigger == "fixed":
+            return self.max_poll_interval
         return min(1, self.max_poll_interval)
 
     def _diverged(self, loss_value: float) -> bool:
@@ -235,6 +293,8 @@ class EfficientPollingOptimizer(PollingOptimizer):
             signal_seen=self.signal_seen,
             ema_loss=self.ema_loss,
             rollback_loss=self._rollback_loss,
+            force_poll=self._force_poll,
+            rng_state=self._rng.getstate(),
         )
         return state
 
@@ -246,6 +306,12 @@ class EfficientPollingOptimizer(PollingOptimizer):
         self.signal_seen = bool(state.get("signal_seen", False))
         self.ema_loss = state.get("ema_loss")
         self._rollback_loss = state.get("rollback_loss")
+        self._force_poll = bool(state.get("force_poll", False))
+        rng_state = state.get("rng_state")
+        if rng_state is not None:
+            # Random insists on its exact tuple shape, which a state dict that
+            # travelled through JSON no longer has.
+            self._rng.setstate((rng_state[0], tuple(rng_state[1]), rng_state[2]))
         # Checkpoint tensors are not serialized: a resumed run has no known-good
         # point until its first poll, which is one batch away at most.
         self._checkpoint = None
@@ -265,7 +331,8 @@ class EfficientPollingSGD(EfficientPollingOptimizer):
     Remaining keyword arguments configure either :class:`torch.optim.SGD`
     (``momentum``, ``weight_decay``, ``nesterov``, ``dampening``) or the polling
     schedule (``max_poll_interval``, ``spike_factor``, ``loss_ema_beta``,
-    ``rollback_loss``, ``rollback_factor``).
+    ``rollback_loss``, ``rollback_factor``, ``trigger``, ``poll_probability``,
+    ``poll_seed``).
     """
 
     _SGD_KEYS = frozenset({"momentum", "dampening", "weight_decay", "nesterov", "maximize"})
