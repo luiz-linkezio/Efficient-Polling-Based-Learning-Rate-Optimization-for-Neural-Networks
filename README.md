@@ -10,7 +10,7 @@
 pip install efficient-polling-lr-scheduler
 ```
 
-[🇧🇷 Versão em português](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/README(pt-br).md) · [🎥 Presentation video](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/videos/apresentação.mp4) · [📄 Paper (LaTeX source)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/main.tex)
+[🇧🇷 Versão em português](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/README(pt-br).md) · [📄 Paper (LaTeX source)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/main.tex)
 
 This repository replicates the **Polling Method** of Tan et al. on CIFAR-10 and introduces **Efficient Polling**, a novel extension that recovers the same learning-rate schedule — and the same accuracy — while polling only **5.43% of batches**, cutting optimizer steps by 79% and per-epoch wall-clock time from 8.05s to 2.81s, the cost of plain SGD. The method is benchmarked over **five random seeds** against **eight comparison methods** — Adam, three schedulers, SPS, Armijo backtracking, and the replicated base Polling method — plus two ablations that isolate the contribution of the adaptive polling trigger. A follow-up extension, **Relative Polling**, drops the fixed candidate grid: the user picks one rate and one multiplier, and a window that widens while blind, backed off without a cap, finds the same schedule from any start. All methods ship as a PyTorch package.
 
@@ -256,7 +256,7 @@ The **fixed-interval control exposes a real failure mode**: on 4/5 seeds it matc
 
 ## Presentation
 
-🎥 [Watch the presentation video](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/videos/apresentação.mp4) · 📊 [Slides (PDF)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/apresentacao_polling.pdf) · [Slides (PPTX)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/apresentacao_polling.pptx) · 📄 [Paper (LaTeX source)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/main.tex)
+📊 [Slides (PDF)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/apresentacao_polling.pdf) · [Slides (PPTX)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/apresentacao_polling.pptx) · 📄 [Paper (LaTeX source)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/main.tex)
 
 ---
 
@@ -282,8 +282,6 @@ The **fixed-interval control exposes a real failure mode**: on 4/5 seeds it matc
 │   ├── main.tex                # the paper (IEEE format)
 │   ├── apresentacao_polling.pdf
 │   └── apresentacao_polling.pptx
-├── videos/
-│   └── apresentação.mp4       # presentation video
 ├── images/                    # figures used in the paper and this README
 ├── results/cifar10/           # the 69 recorded runs: 13 configurations × 5 seeds, plus 4 initial-rate runs
 ├── models/                    # best checkpoints per method (.pt, gitignored)

@@ -10,7 +10,7 @@
 pip install efficient-polling-lr-scheduler
 ```
 
-[🇺🇸 English version](README.md) · [🎥 Vídeo da apresentação](videos/apresentação.mp4) · [📄 Artigo (fonte LaTeX)](docs/main.tex)
+[🇺🇸 English version](README.md) · [📄 Artigo (fonte LaTeX)](docs/main.tex)
 
 Este repositório replica o **Método de Polling** de Tan et al. no CIFAR-10 e introduz o **Efficient Polling**, uma extensão inédita que recupera o mesmo cronograma de taxa de aprendizado — e a mesma acurácia — fazendo poll em apenas **5,43% dos batches**, reduzindo os passos do otimizador em 79% e o tempo de parede por época de 8,05s para 2,81s, o custo de um SGD comum. O método é avaliado sobre **cinco seeds aleatórias** contra **oito métodos de comparação** — Adam, três schedulers, SPS, Armijo backtracking e o método base de Polling replicado — mais duas ablações que isolam a contribuição do gatilho adaptativo de poll. Todos os métodos são distribuídos como um pacote PyTorch.
 
@@ -256,7 +256,7 @@ O **controle de intervalo fixo expõe uma falha real**: em 4/5 seeds ele iguala 
 
 ## Apresentação
 
-🎥 [Assista ao vídeo da apresentação](videos/apresentação.mp4) · 📊 [Slides (PDF)](docs/apresentacao_polling.pdf) · [Slides (PPTX)](docs/apresentacao_polling.pptx) · 📄 [Artigo (fonte LaTeX)](docs/main.tex)
+📊 [Slides (PDF)](docs/apresentacao_polling.pdf) · [Slides (PPTX)](docs/apresentacao_polling.pptx) · 📄 [Artigo (fonte LaTeX)](docs/main.tex)
 
 ---
 
@@ -282,8 +282,6 @@ O **controle de intervalo fixo expõe uma falha real**: em 4/5 seeds ele iguala 
 │   ├── main.tex                # o artigo (formato IEEE)
 │   ├── apresentacao_polling.pdf
 │   └── apresentacao_polling.pptx
-├── videos/
-│   └── apresentação.mp4       # vídeo da apresentação
 ├── images/                    # figuras usadas no artigo e neste README
 ├── results/cifar10/           # as 69 execuções gravadas: 13 configurações × 5 seeds, mais 4 runs de taxa inicial
 ├── models/                    # melhores checkpoints por método (.pt, gitignored)
