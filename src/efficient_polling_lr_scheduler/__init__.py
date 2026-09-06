@@ -33,6 +33,7 @@ from .polling import (
     StepInfo,
     default_candidate_lrs,
 )
+from .relative import RelativeEpochPolling, RelativePollingOptimizer, RelativePollingSGD
 from .training import EpochStats, History, evaluate, fit, train_epoch
 
 __version__ = "1.0.1"
@@ -48,6 +49,9 @@ __all__ = [
     "PollResult",
     "PollingOptimizer",
     "PollingSGD",
+    "RelativeEpochPolling",
+    "RelativePollingOptimizer",
+    "RelativePollingSGD",
     "SPSOptimizer",
     "SPSSGD",
     "ScoreFn",

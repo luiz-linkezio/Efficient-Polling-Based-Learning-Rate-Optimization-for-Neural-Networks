@@ -4,6 +4,33 @@ All notable changes to the `efficient-polling-lr-scheduler` package are document
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `RelativePollingSGD` / `RelativePollingOptimizer` — Relative Polling
+  (experimental): three candidates `{X/m, X, X·m}` around the rate in use, the
+  winner becoming the new centre, the window widening by a multiplier after
+  every blind poll; an uncapped TCP-style backoff whose ceiling
+  is set by blow-ups; restarts that go back to the best point seen (weights,
+  optimizer state, rate and loss trend); an Adam-style loss trend (`Trend`)
+  with a deviation-based spike test; and a downward tie-break on the poll
+  after a restart.
+- `RelativeEpochPolling` — the same method at epoch granularity, driven by
+  `fit(..., epoch_polling=...)` over a plain optimizer: a poll epoch trains
+  once per candidate and keeps the trial with the lowest mean training loss;
+  validation accuracy judges the best point.
+- `PollingOptimizer.poll()` accepts a per-call `candidates` sequence, taken in
+  tie-break order, reports whether the winner was `decisive`, and scores a
+  trial whose loss is not finite as a loss.
+- `fit()` accepts `epoch_polling`.
+- Notebook and `examples/cifar10.py`: `relative` and `relative_epoch`
+  configurations, a `granularities` flag, and an initial-learning-rate
+  robustness sweep with its figure.
+- `results/cifar10/`: the ten Relative Polling runs (two configurations, five
+  seeds) and the four initial-rate runs; figures redrawn with a fourth panel
+  and `images/initial_lr_robustness.png` added. Results are in the README.
+
 ## [1.0.1] - 2026-08-03
 
 ### Changed

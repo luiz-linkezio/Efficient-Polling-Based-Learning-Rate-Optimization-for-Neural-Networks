@@ -222,3 +222,75 @@ def test_state_dict_round_trip(model: TinyNet, batch, loss_fn) -> None:
     restored.load_state_dict(saved)
 
     assert restored.candidate_lrs == (1e-4, 1e-3)
+
+
+def test_poll_takes_candidates_in_tie_break_order(batch) -> None:
+    """A per-call candidate list overrides the fixed set; earlier wins ties."""
+    inputs, _ = batch
+    model = TinyNet()
+    poller = PollingSGD(model, lr=1e-3, candidate_lrs=(1e-4, 1e-3, 1e-2))
+
+    def tied():
+        loss = model(inputs).square().sum()
+        return loss, 0.0
+
+    poller.optimizer.zero_grad()
+    loss, _ = tied()
+    loss.backward()
+
+    assert poller.poll(tied).lr == 1e-4  # the fixed set, ascending: smallest wins
+    result = poller.poll(tied, candidates=(1e-3, 1e-4, 1e-2))
+    assert result.lr == 1e-3
+    assert result.optimizer_steps == 4
+    assert not result.had_signal
+    assert not result.decisive
+
+
+def test_poll_reports_whether_the_winner_stood_alone(batch) -> None:
+    inputs, _ = batch
+    model = TinyNet()
+    poller = PollingSGD(model, lr=1e-3, candidate_lrs=(1e-4, 1e-3, 1e-2))
+
+    def scored():
+        loss = model(inputs).square().sum()
+        lr = poller.optimizer.param_groups[0]["lr"]
+        return loss, {1e-4: 0.5, 1e-3: 0.5, 1e-2: 1.0}[lr]
+
+    poller.optimizer.zero_grad()
+    loss, _ = scored()
+    loss.backward()
+
+    result = poller.poll(scored)
+    assert result.lr == 1e-2
+    assert result.decisive  # strictly above both others
+
+    def shared_top():
+        loss = model(inputs).square().sum()
+        lr = poller.optimizer.param_groups[0]["lr"]
+        return loss, {1e-4: 0.0, 1e-3: 1.0, 1e-2: 1.0}[lr]
+
+    result = poller.poll(shared_top)
+    assert result.lr == 1e-3  # earlier wins the tie at the top
+    assert result.had_signal
+    assert not result.decisive
+
+
+def test_a_trial_with_a_non_finite_loss_loses_the_poll(batch) -> None:
+    inputs, _ = batch
+    model = TinyNet()
+    poller = PollingSGD(model, lr=1e-3, candidate_lrs=(1e-4, 1e-3, 1e-2))
+
+    def exploding():
+        loss = model(inputs).square().sum()
+        lr = poller.optimizer.param_groups[0]["lr"]
+        if lr == 1e-2:
+            return loss + float("inf"), 1.0  # the best score, on broken weights
+        return loss, 0.5
+
+    poller.optimizer.zero_grad()
+    loss, _ = exploding()
+    loss.backward()
+
+    result = poller.poll(exploding)
+    assert result.lr == 1e-4
+    assert result.had_signal

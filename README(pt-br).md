@@ -28,7 +28,7 @@ O **Efficient Polling** observa que a escolha do poll é altamente redundante �
 | Polling (paper base) | 84,08% | 83,83% | 0,6821 | 100% | 8,05 |
 | **Efficient Polling (nosso)** | **84,37%** | 83,76% | 0,7392 | **5,43%** | **2,81** |
 
-*150 épocas, média ± desvio padrão amostral sobre cinco seeds (42–46), NVIDIA RTX 5070. A comparação completa entre onze configurações — Adam, três schedulers, SPS, Armijo backtracking e duas variantes de ablação do gatilho — está em [Resultados](#resultados).*
+*150 épocas, média ± desvio padrão amostral sobre cinco seeds (42–46), NVIDIA RTX 5070. A comparação completa, treze configurações com a extensão Relative Polling — Adam, três schedulers, SPS, Armijo backtracking e duas variantes de ablação do gatilho — está em [Resultados](#resultados).*
 
 O Efficient Polling **iguala** a acurácia do método base (dentro de 0,1 pp no teste) reduzindo os passos do otimizador em **79%** e o tempo por época de 8,05s para **2,81s** — 2,9× mais rápido que o Polling base, indistinguível dos 2,86s do SGD puro.
 
@@ -96,6 +96,8 @@ print(history.best_val_acc, sum(history.polls), sum(history.optimizer_steps))
 |---|---|
 | `EfficientPollingSGD` / `EfficientPollingOptimizer` | método proposto: poll sob demanda, com a guarda anti-divergência |
 | `PollingSGD` / `PollingOptimizer` | método base: poll a cada batch |
+| `RelativePollingSGD` / `RelativePollingOptimizer` | Relative Polling (experimental): três candidatos em torno da taxa em uso, backoff sem teto no estilo TCP, restarts a partir do melhor ponto |
+| `RelativeEpochPolling` | o mesmo método por época, conduzido por `fit(..., epoch_polling=...)` sobre um otimizador comum |
 | `SPSSGD` / `SPSOptimizer` | baseline de comparação: Polyak step-size estocástico |
 | `ArmijoSGD` / `ArmijoOptimizer` | baseline de comparação: busca de linha Armijo backtracking estocástica |
 | `TRIGGERS` | os três gatilhos de poll usados na ablação: `"backoff"` (padrão), `"fixed"`, `"random"` |
@@ -145,11 +147,63 @@ Nas cinco execuções oficiais, os polls disparados por spike somaram em média 
 | `β` | `0,9` | decaimento da EMA da perda |
 | `ℓ_rb` | `2·ln 10 ≈ 4,61` | limiar de rollback (nível 1) |
 
+### Relative Polling (extensão proposta, por batch)
+
+Os dois métodos acima escolhem dentro de uma grade *fixa*, e nas runs registradas a taxa escolhida passa a maior parte do treino encostada nas bordas dessa grade: `1e-1` na primeira fase, `1e-5` depois do annealing. O Relative Polling dispensa a grade. O usuário escolhe uma taxa de aprendizado e um multiplicador `m`, e cada poll testa três candidatos em torno da taxa em uso; o vencedor vira o novo centro:
+
+```
+C_t = {X/m, X, X·m}        X ← argmax acc(θ̂, batch)
+```
+
+Quando um poll volta cego — todos os candidatos com a mesma pontuação, o que a acurácia do batch faz sempre que um passo não muda nenhuma predição — o poll seguinte olha um multiplicador mais longe nos dois sentidos, e continua alargando até enxergar uma diferença; um poll com sinal estreita a janela de volta. Três regras completam o método:
+
+1. **Backoff sem teto, limitado pela falha.** O intervalo de poll `k` dobra quando um poll agendado com sinal mantém a taxa, um poll cego o deixa como está, e não tem `K_max`. Cada poll registra o *melhor* ponto visto até então — pesos, estado do otimizador e taxa, julgados por uma tendência lenta da perda. Quando um trecho cego estoura, o treino volta no tempo até esse ponto, `k` vai a zero e o teto do próximo slow start passa a ser metade do intervalo que estourou; o crescimento é exponencial até o teto e linear acima dele, como no controle de congestionamento do TCP.
+2. **Empate mantém a taxa, exceto depois de um restart.** Um empate não carrega informação, então um poll comum mantém `X`. O poll logo depois de um restart desempata um degrau *para baixo*, porque um restart tem uma única causa — taxa alta demais para passos cegos.
+3. **Tendência no estilo Adam.** A tendência da perda é uma média exponencial com correção de viés mais um segundo momento dos desvios, de modo que um spike é uma perda mais de `z` desvios acima da tendência, em vez de uma razão fixa sobre ela.
+
+```python
+from efficient_polling_lr_scheduler import RelativePollingSGD
+
+optimizer = RelativePollingSGD(model, lr=1e-3, multiplier=10.0, lr_max=1e-1)
+```
+
+| Símbolo | Padrão | Papel |
+|---|---|---|
+| `lr` | `1e-3` | a única taxa que o usuário escolhe |
+| `m` | `10` | espaçamento dos candidatos |
+| `lr_min`, `lr_max` | nenhum | limites opcionais; os experimentos usam o teto `1e-1` por paridade com a tabela abaixo |
+| `z` | `3` | limiar de spike, em desvios acima da tendência |
+| `ℓ_rb` | `2·ln 10` | limiar de estouro, como acima |
+
+**Resultados.** Mesmo protocolo da tabela abaixo, cinco seeds, candidatos limitados a `1e-1`:
+
+| Método | Melhor Val | Acurácia Teste | Perda Teste | Polls | Passos do otimizador | s/Época |
+|---|---|---|---|---|---|---|
+| Efficient Polling (grade fixa) | 84,37% ± 0,91% | 83,76% ± 0,72% | 0,7392 ± 0,0201 | 5,43% | 134.261 | 2,81 ± 0,02 |
+| **Relative Polling, por batch** | 84,68% ± 0,77% | **84,11% ± 0,41%** | 0,9803 ± 0,1398 | 7,25% ± 6,25% | 127.379 | 2,82 ± 0,25 |
+| Relative Polling, por época | 48,18% ± 2,61% | 47,99% ± 1,91% | 1,4184 ± 0,0450 | 61,33% | 234.432 | 6,47 ± 0,52 |
+
+Por batch, o Relative Polling alcança a acurácia de teste do Armijo backtracking (84,09%, a melhor da tabela abaixo) ao custo do SGD puro, com poll em 7% dos batches; um poll custa 4 passos do otimizador em vez de 6, então ele dá menos passos que o Efficient Polling. Ele encontra a mesma primeira fase em `1e-1` e depois se assenta em `1e-2` da época ~40 até o fim, em vez de anelar até `1e-5`: quando a acurácia do batch satura o critério fica cego, empates mantêm a taxa, e nenhum estouro forçou um degrau para baixo (um restart em cinco runs). Esse patamar é o que custa perda de teste — o treino continua em `1e-2` sobre um conjunto de treino que ele já ajusta, e as predições ficam superconfiantes. A fração de polls varia por seed (1,8% a 16,3%): uma seed que fica caçando entre `1e-1` e `1e-2` zera o intervalo a cada mudança.
+
+**A taxa que o usuário escolhe não precisa estar certa.** Partindo de duas décadas abaixo ou acima do padrão, na seed 42:
+
+| Início | Efficient Polling (grade presa ao início) | Relative Polling |
+|---|---|---|
+| `1e-5` | 10,04% — nunca sai de `1e-7` | 84,72% |
+| `1e-3` (padrão) | 83,97% | 84,67% |
+| `1e-1` | 9,98% — explode em `10` | 84,62% |
+
+De qualquer início a janela relativa está em `1e-1` na primeira época e reproduz o mesmo cronograma.
+
+![Robustez à taxa inicial](https://raw.githubusercontent.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/main/images/initial_lr_robustness.png)
+
+**Por época é um resultado negativo.** `RelativeEpochPolling`, conduzido por `fit(..., epoch_polling=...)`, treina uma época inteira por candidato a partir de um snapshot e mantém a que teve a menor loss média de treino. Ele leva a taxa até `1e-5` em trinta épocas e estaciona em 48%; selecionar pela acurácia de validação no fim da época fez o mesmo, até `1e-8` e 45%. Qualquer nota de uma única época premia a suavidade de um passo pequeno em vez do progresso de um passo grande, e uma época cega em `1e-1` não tem a proteção por passo que o método por batch ganha com os polls de spike. A granularidade que funciona é o batch.
+
 ---
 
 ## Resultados
 
-A tabela abaixo reproduz a Tabela I do artigo: onze configurações, cada uma executada em cinco seeds (42–46), 150 épocas, batch 64 (704 batches/época, 105.600/execução). Reportada como média ± desvio padrão amostral.
+A tabela abaixo reproduz a Tabela I do artigo, onze configurações, mais as duas configurações do Relative Polling adicionadas depois do artigo; cada uma executada em cinco seeds (42–46), 150 épocas, batch 64 (704 batches/época, 105.600/execução). Reportada como média ± desvio padrão amostral.
 
 | Método | Melhor Val | Acc Teste | Perda Teste | Poll | Passos do Otimizador | s/Época |
 |---|---|---|---|---|---|---|
@@ -164,6 +218,8 @@ A tabela abaixo reproduz a Tabela I do artigo: onze configurações, cada uma ex
 | **Efficient Polling (nosso)** | 84,37% ± 0,91% | 83,76% ± 0,72% | 0,7392 ± 0,0201 | **5,43%** | **134.261** | **2,81 ± 0,02** |
 | ↳ ablação: intervalo fixo | 69,20% ± 33,49% | 68,91% ± 32,91% | 1,0999 ± 0,6782 | 5,43% | 134.286 | 2,81 ± 0,01 |
 | ↳ ablação: gatilho aleatório | 84,45% ± 0,61% | 84,02% ± 0,54% | 0,8116 ± 0,0235 | 5,77% | 136.085 | 2,83 ± 0,01 |
+| **Relative Polling (nosso, por batch)** | 84,68% ± 0,77% | **84,11% ± 0,41%** | 0,9803 ± 0,1398 | 7,25% | 127.379 | 2,82 ± 0,25 |
+| ↳ por época | 48,18% ± 2,61% | 47,99% ± 1,91% | 1,4184 ± 0,0450 | 61,33% | 234.432 | 6,47 ± 0,52 |
 
 Os três schedulers começam em `1e-1` (o topo do conjunto de candidatos) em vez da LR base `1e-3` do baseline, já que um cronograma de decaimento precisa de algo de onde decair; SPS e Armijo são limitados a esse mesmo `1e-1`, de modo que nenhum método pode dar um passo que os outros nunca puderam considerar. Apesar disso, cosine annealing, step decay e ReduceLROnPlateau divergem para `NaN` por volta da época 28 na maioria das seeds (5/5, 4/5 e 1/5, respectivamente) — a tabela ainda os credita com o melhor checkpoint pré-divergência, já que cada método é avaliado na sua própria melhor época de validação. As duas variantes de polling mantêm essa mesma `1e-1` por cerca de trinta épocas ao longo de suas 25 execuções combinadas, sem uma única falha: o que quebra os schedulers não é a taxa em si, mas a ausência de uma verificação por passo sobre ela.
 
@@ -172,7 +228,7 @@ Ambos os métodos de polling descobrem autonomamente o mesmo **cronograma de dua
 | | |
 |---|---|
 | ![Curvas de perda](images/training_comparison_losses_all.png) | ![Trajetórias de LR](images/training_comparison_LRs_all.png) |
-| Perda de treino e validação, onze configurações. | LR média selecionada por época, symlog, com um X marcando divergência. |
+| Perda de treino e validação, treze configurações. | LR média selecionada por época, symlog, com um X marcando divergência. |
 
 ![Polls por época](images/polls_per_epoch.png)
 
@@ -211,16 +267,17 @@ O **controle de intervalo fixo expõe uma falha real**: em 4/5 seeds ele iguala 
 ├── src/efficient_polling_lr_scheduler/     # o pacote instalável
 │   ├── polling.py             # método base (Tan et al.)
 │   ├── efficient.py           # Efficient Polling (nosso), incl. os gatilhos fixo/aleatório
+│   ├── relative.py            # Relative Polling (nosso): janela que alarga, backoff estilo TCP, restarts no melhor ponto
 │   ├── baselines.py           # otimizadores de comparação SPS e Armijo backtracking
 │   ├── _snapshot.py           # salvamento/restauração exata do estado nos testes
 │   ├── closures.py            # closures do batch e critérios de seleção
 │   └── training.py            # helpers opcionais fit/train_epoch/evaluate
 ├── tests/                     # suíte pytest dos algoritmos
 ├── examples/
-│   ├── cifar10.py             # reproduz as onze configurações via CLI
+│   ├── cifar10.py             # reproduz as treze configurações via CLI
 │   └── plot_results.py        # redesenha as figuras a partir das execuções gravadas
 ├── notebooks/
-│   └── cifar10.ipynb          # experimentos originais: dados, modelo, os 11 métodos, plots
+│   └── cifar10.ipynb          # experimentos originais: dados, modelo, os 13 métodos, plots
 ├── docs/
 │   ├── main.tex                # o artigo (formato IEEE)
 │   ├── apresentacao_polling.pdf
@@ -228,7 +285,7 @@ O **controle de intervalo fixo expõe uma falha real**: em 4/5 seeds ele iguala 
 ├── videos/
 │   └── apresentação.mp4       # vídeo da apresentação
 ├── images/                    # figuras usadas no artigo e neste README
-├── results/cifar10/           # as 55 execuções gravadas (11 métodos × 5 seeds) por trás do artigo
+├── results/cifar10/           # as 69 execuções gravadas: 13 configurações × 5 seeds, mais 4 runs de taxa inicial
 ├── models/                    # melhores checkpoints por método (.pt, gitignored)
 ├── pyproject.toml
 ├── CHANGELOG.md
@@ -287,7 +344,7 @@ Como alternativa, abra o notebook original e rode as células de cima para baixo
 jupyter notebook notebooks/cifar10.ipynb
 ```
 
-O notebook está organizado como: Imports → Constants → Configs (seeds `42`–`46`, device) → Data (dataset, estatísticas de normalização, split 90/10 treino/val) → Model (`SimpleCIFAR10CNN`, ~0,56M params) → Train (onze configurações, um único loop compartilhado) → Animações e plots → Test. Os melhores checkpoints são gravados em `models/`.
+O notebook está organizado como: Imports → Constants → Configs (seeds `42`–`46`, device) → Data (dataset, estatísticas de normalização, split 90/10 treino/val) → Model (`SimpleCIFAR10CNN`, ~0,56M params) → Train (treze configurações, um único loop compartilhado) → Animações e plots → Test. Os melhores checkpoints são gravados em `models/`.
 
 > **Reprodutibilidade.** Cinco seeds (42–46) fixam, cada uma, a inicialização dos pesos, o embaralhamento dos dados e o split treino/val, de modo que numa dada seed todos os métodos partem dos mesmos pesos e veem a mesma ordem de batches. Todos os números acima são a média ± desvio padrão amostral sobre as cinco execuções.
 
@@ -299,7 +356,7 @@ O notebook está organizado como: Imports → Constants → Configs (seeds `42`�
 - **Modelo:** `SimpleCIFAR10CNN`, uma CNN de 5 camadas (canais conv 64→64→128→128→256, kernels `3×3`, ReLU, MaxPool, AdaptiveAvgPool, cabeça Linear), **557.898 parâmetros**, sem batch norm nem dropout, para que o otimizador seja a única fonte de adaptação.
 - **Otimizador:** SGD puro (sem momentum, sem weight decay) para o método proposto e o replicado, batch 64, LR base `1e-3`, 150 épocas (704 batches/época, 105.600 no total).
 - **Métodos de comparação:** Adam, cosine annealing, step decay, ReduceLROnPlateau, SPS (Polyak step-size), Armijo backtracking line search e o método de Polling base replicado — oito no total, mais duas variantes de ablação do gatilho do método proposto.
-- **Seeds:** cinco (42–46) por configuração, onze configurações, 55 execuções no total.
+- **Seeds:** cinco (42–46) por configuração, treze configurações, 65 execuções no total, mais quatro runs de robustez à taxa inicial na seed 42.
 - **Hardware:** uma única NVIDIA GeForce RTX 5070 (12 GB).
 
 ---

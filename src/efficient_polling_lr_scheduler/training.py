@@ -185,6 +185,7 @@ def fit(
     checkpoint_path: str | Path | None = None,
     log_fn: Callable[[str], None] | None = print,
     scheduler: Any | None = None,
+    epoch_polling: Any | None = None,
 ) -> History:
     """Train for ``epochs``, tracking the best validation score.
 
@@ -205,18 +206,38 @@ def fit(
             receives the validation loss; any other scheduler is stepped with no
             argument. Only meaningful for a plain optimizer -- a polling
             optimizer overwrites the learning rate every time it polls.
+        epoch_polling: optional epoch-level controller such as
+            :class:`~efficient_polling_lr_scheduler.relative.RelativeEpochPolling`,
+            which takes over each epoch through its ``run_epoch`` method:
+            training the epoch once per candidate rate on poll epochs, blind
+            otherwise. Requires a plain optimizer.
 
     Returns:
         The :class:`History` of the run.
     """
+    if epoch_polling is not None and isinstance(optimizer, PollingOptimizer):
+        raise ValueError(
+            "epoch_polling drives a plain optimizer; a polling optimizer already "
+            "selects its learning rate per batch"
+        )
     history = History()
     path = Path(checkpoint_path) if checkpoint_path is not None else None
     if path is not None:
         path.parent.mkdir(parents=True, exist_ok=True)
 
     for epoch in range(1, epochs + 1):
-        stats = train_epoch(model, train_loader, optimizer, loss_fn, device, score_fn)
-        val_loss, val_acc = evaluate(model, val_loader, loss_fn, device, score_fn)
+        if epoch_polling is not None:
+            stats, val_loss, val_acc = epoch_polling.run_epoch(
+                optimizer,
+                model,
+                train=lambda: train_epoch(
+                    model, train_loader, optimizer, loss_fn, device, score_fn
+                ),
+                validate=lambda: evaluate(model, val_loader, loss_fn, device, score_fn),
+            )
+        else:
+            stats = train_epoch(model, train_loader, optimizer, loss_fn, device, score_fn)
+            val_loss, val_acc = evaluate(model, val_loader, loss_fn, device, score_fn)
 
         history.train_loss.append(stats.loss)
         history.train_acc.append(stats.score)
@@ -246,7 +267,7 @@ def fit(
                 f"train loss {stats.loss:.4f} acc {stats.score:.4f} | "
                 f"val loss {val_loss:.4f} acc {val_acc:.4f}"
             )
-            if isinstance(optimizer, PollingOptimizer):
+            if isinstance(optimizer, PollingOptimizer) or epoch_polling is not None:
                 line += f" | polls {stats.polls}/{stats.batches} rb {stats.rollbacks}"
             log_fn(line)
 
