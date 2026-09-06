@@ -10,7 +10,7 @@
 pip install efficient-polling-lr-scheduler
 ```
 
-[🇧🇷 Versão em português](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/README(pt-br).md) · [🎥 Presentation video](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/videos/apresentação.mp4)
+[🇧🇷 Versão em português](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/README(pt-br).md)
 
 This repository replicates the **Polling Method** of Tan et al. on CIFAR-10 and introduces **Efficient Polling**, a novel extension that recovers the same learning-rate schedule — and the same accuracy — while polling only **5% of batches**, cutting optimizer steps by 75% and per-epoch wall-clock time by **3.3×**. Both methods ship as a PyTorch package.
 
@@ -159,7 +159,7 @@ versus `528,000` for base Polling — a 75% reduction, exactly reproducing the m
 
 ## Presentation
 
-🎥 [Watch the presentation video](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/videos/apresentação.mp4) · 📊 [Slides (PDF)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/apresentacao_polling.pdf) · [Slides (PPTX)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/apresentacao_polling.pptx)
+📊 [Slides (PDF)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/apresentacao_polling.pdf) · [Slides (PPTX)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/apresentacao_polling.pptx)
 
 ---
 
@@ -181,8 +181,6 @@ versus `528,000` for base Polling — a 75% reduction, exactly reproducing the m
 ├── docs/
 │   ├── apresentacao_polling.pdf
 │   └── apresentacao_polling.pptx
-├── videos/
-│   └── apresentação.mp4       # presentation video
 ├── images/                    # figures used in the paper and this README
 ├── models/                    # best checkpoints per method (.pt, gitignored)
 ├── pyproject.toml

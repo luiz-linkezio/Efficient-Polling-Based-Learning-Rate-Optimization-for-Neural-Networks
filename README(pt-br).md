@@ -10,7 +10,7 @@
 pip install efficient-polling-lr-scheduler
 ```
 
-[🇺🇸 English version](README.md) · [🎥 Vídeo da apresentação](videos/apresentação.mp4)
+[🇺🇸 English version](README.md)
 
 Este repositório replica o **Método de Polling** de Tan et al. no CIFAR-10 e introduz o **Efficient Polling**, uma extensão inédita que recupera o mesmo cronograma de taxa de aprendizado — e a mesma acurácia — fazendo poll em apenas **5% dos batches**, reduzindo os passos do otimizador em 75% e o tempo de parede por época em **3,3×**. Ambos os métodos são distribuídos como um pacote PyTorch.
 
@@ -159,7 +159,7 @@ contra `528.000` do Polling base — uma redução de 75%, reproduzindo exatamen
 
 ## Apresentação
 
-🎥 [Assista ao vídeo da apresentação](videos/apresentação.mp4) · 📊 [Slides (PDF)](docs/apresentacao_polling.pdf) · [Slides (PPTX)](docs/apresentacao_polling.pptx)
+📊 [Slides (PDF)](docs/apresentacao_polling.pdf) · [Slides (PPTX)](docs/apresentacao_polling.pptx)
 
 ---
 
@@ -181,8 +181,6 @@ contra `528.000` do Polling base — uma redução de 75%, reproduzindo exatamen
 ├── docs/
 │   ├── apresentacao_polling.pdf
 │   └── apresentacao_polling.pptx
-├── videos/
-│   └── apresentação.mp4       # vídeo da apresentação
 ├── images/                    # figuras usadas no artigo e neste README
 ├── models/                    # melhores checkpoints por método (.pt, gitignored)
 ├── pyproject.toml
