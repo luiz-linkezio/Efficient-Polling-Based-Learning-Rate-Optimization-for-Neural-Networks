@@ -254,12 +254,6 @@ O **controle de intervalo fixo expõe uma falha real**: em 4/5 seeds ele iguala 
 
 ---
 
-## Apresentação
-
-📊 [Slides (PDF)](docs/apresentacao_polling.pdf) · [Slides (PPTX)](docs/apresentacao_polling.pptx) · 📄 [Artigo (fonte LaTeX)](docs/main.tex)
-
----
-
 ## Estrutura do repositório
 
 ```
@@ -279,9 +273,7 @@ O **controle de intervalo fixo expõe uma falha real**: em 4/5 seeds ele iguala 
 ├── notebooks/
 │   └── cifar10.ipynb          # experimentos originais: dados, modelo, os 13 métodos, plots
 ├── docs/
-│   ├── main.tex                # o artigo (formato IEEE)
-│   ├── apresentacao_polling.pdf
-│   └── apresentacao_polling.pptx
+│   └── main.tex                # o artigo (formato IEEE)
 ├── images/                    # figuras usadas no artigo e neste README
 ├── results/cifar10/           # as 69 execuções gravadas: 13 configurações × 5 seeds, mais 4 runs de taxa inicial
 ├── models/                    # melhores checkpoints por método (.pt, gitignored)

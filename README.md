@@ -254,12 +254,6 @@ The **fixed-interval control exposes a real failure mode**: on 4/5 seeds it matc
 
 ---
 
-## Presentation
-
-📊 [Slides (PDF)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/apresentacao_polling.pdf) · [Slides (PPTX)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/apresentacao_polling.pptx) · 📄 [Paper (LaTeX source)](https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/blob/main/docs/main.tex)
-
----
-
 ## Repository structure
 
 ```
@@ -279,9 +273,7 @@ The **fixed-interval control exposes a real failure mode**: on 4/5 seeds it matc
 ├── notebooks/
 │   └── cifar10.ipynb          # original experiments: data, model, all 13 methods, plots
 ├── docs/
-│   ├── main.tex                # the paper (IEEE format)
-│   ├── apresentacao_polling.pdf
-│   └── apresentacao_polling.pptx
+│   └── main.tex                # the paper (IEEE format)
 ├── images/                    # figures used in the paper and this README
 ├── results/cifar10/           # the 69 recorded runs: 13 configurations × 5 seeds, plus 4 initial-rate runs
 ├── models/                    # best checkpoints per method (.pt, gitignored)
