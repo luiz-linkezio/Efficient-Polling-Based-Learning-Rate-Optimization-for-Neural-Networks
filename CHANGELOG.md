@@ -4,7 +4,10 @@ All notable changes to the `efficient-polling-lr-scheduler` package are document
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-09-06
+
+Version 1.0.1 was prepared in the source tree but never published; its
+README rewrite is folded in here.
 
 ### Added
 
@@ -31,14 +34,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   seeds) and the four initial-rate runs; figures redrawn with a fourth panel
   and `images/initial_lr_robustness.png` added. Results are in the README.
 
-## [1.0.1] - 2026-08-03
-
 ### Changed
 
-- README.md and README(pt-br).md rewritten to match `docs/main.tex`: the
-  five-seed, eleven-configuration study (replacing the single-seed, three-method
-  numbers from 0.1.0), the full comparison table, the cost model, the
-  divergence-guard statistics and the trigger-ablation results. No code changes.
+- README.md and README(pt-br).md rewritten to match the paper: the five-seed,
+  thirteen-configuration study (replacing the single-seed, three-method numbers
+  from 0.1.0), the full comparison table, the cost model, the divergence-guard
+  statistics and the trigger-ablation results.
+
+### Removed
+
+- The presentation video and the presentation slides, and every link to them in
+  both READMEs. They were outdated class material that was never meant to be
+  distributed with the package.
 
 ## [1.0.0] - 2026-08-02
 
