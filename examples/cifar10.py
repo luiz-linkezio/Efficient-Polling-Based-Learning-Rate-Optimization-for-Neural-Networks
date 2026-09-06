@@ -47,6 +47,8 @@ from efficient_polling_lr_scheduler import (
     ArmijoSGD,
     EfficientPollingSGD,
     PollingSGD,
+    RelativeEpochPolling,
+    RelativePollingSGD,
     evaluate,
     fit,
 )
@@ -65,6 +67,8 @@ METHODS = (
     "armijo",
     "efficient_fixed",
     "efficient_random",
+    "relative",
+    "relative_epoch",
 )
 
 LABELS = {
@@ -79,6 +83,8 @@ LABELS = {
     "armijo": "Armijo line search",
     "efficient_fixed": "  ablation: fixed interval",
     "efficient_random": "  ablation: random trigger",
+    "relative": "Relative Polling (ours, per batch)",
+    "relative_epoch": "Relative Polling (ours, per epoch)",
 }
 
 
@@ -234,6 +240,21 @@ def build_optimizer(method: str, model: nn.Module, args: argparse.Namespace, see
         )
     if method == "polling":
         return PollingSGD(model, lr=args.lr), None
+    if method == "relative":
+        return (
+            RelativePollingSGD(
+                model,
+                lr=args.lr,
+                multiplier=args.multiplier,
+                lr_max=_relative_lr_max(args),
+                spike_z=args.spike_z,
+                rollback_loss=2.0 * math.log(10),
+            ),
+            None,
+        )
+    if method == "relative_epoch":
+        # Per epoch the controller drives a plain SGD; see build_epoch_polling().
+        return torch.optim.SGD(model.parameters(), lr=args.lr), None
     # The paper pins the rollback threshold at twice the random-guess loss for
     # ten classes; passing it explicitly keeps the run bit-comparable.
     #
@@ -256,6 +277,21 @@ def build_optimizer(method: str, model: nn.Module, args: argparse.Namespace, see
     return EfficientPollingSGD(model, lr=args.lr, **kwargs), None
 
 
+def _relative_lr_max(args: argparse.Namespace) -> float | None:
+    return None if math.isinf(args.relative_lr_max) else args.relative_lr_max
+
+
+def build_epoch_polling(method: str, args: argparse.Namespace):
+    """The epoch-level controller for ``relative_epoch``; ``None`` for every other method."""
+    if method != "relative_epoch":
+        return None
+    return RelativeEpochPolling(
+        multiplier=args.multiplier,
+        lr_max=_relative_lr_max(args),
+        rollback_loss=2.0 * math.log(10),
+    )
+
+
 def run(method: str, seed: int, args: argparse.Namespace, loaders) -> dict:
     train_loader, val_loader, test_loader = loaders
     device = torch.device(args.device)
@@ -267,6 +303,7 @@ def run(method: str, seed: int, args: argparse.Namespace, loaders) -> dict:
     model = SimpleCIFAR10CNN().to(device)
     n_params = sum(p.numel() for p in model.parameters())
     optimizer, scheduler = build_optimizer(method, model, args, seed)
+    epoch_polling = build_epoch_polling(method, args)
     loss_fn = nn.CrossEntropyLoss()
     checkpoint = Path(args.models_dir) / f"cifar10_best_{method}_seed{seed}.pt"
 
@@ -282,6 +319,7 @@ def run(method: str, seed: int, args: argparse.Namespace, loaders) -> dict:
         device=device,
         checkpoint_path=checkpoint,
         scheduler=scheduler,
+        epoch_polling=epoch_polling,
     )
     elapsed = time.perf_counter() - started
 
@@ -303,6 +341,7 @@ def run(method: str, seed: int, args: argparse.Namespace, loaders) -> dict:
         "method": method,
         "seed": seed,
         "epochs": args.epochs,
+        "lr0": args.lr,
         "best_val": history.best_val_acc,
         "best_epoch": history.best_epoch,
         "test_acc": test_acc,
@@ -390,6 +429,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--armijo-alpha", type=float, default=1e-4)
     parser.add_argument("--armijo-beta", type=float, default=0.5)
     parser.add_argument("--armijo-max-iters", type=int, default=10)
+    parser.add_argument(
+        "--multiplier",
+        type=float,
+        default=10.0,
+        help="Relative Polling: spacing between the three candidates {X/m, X, X*m}",
+    )
+    parser.add_argument(
+        "--spike-z",
+        type=float,
+        default=3.0,
+        help="Relative Polling, per batch: deviations above the loss trend that force a poll",
+    )
+    parser.add_argument(
+        "--relative-lr-max",
+        type=float,
+        default=0.1,
+        help="ceiling for Relative Polling's candidates, the same 1e-1 every other "
+        "method is held to; pass inf to let the window roam. For the initial-rate "
+        "robustness runs, combine --lr with a separate --results-dir",
+    )
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return parser.parse_args()
 

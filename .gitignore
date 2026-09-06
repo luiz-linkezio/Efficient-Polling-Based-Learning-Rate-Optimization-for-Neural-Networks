@@ -2,6 +2,9 @@ base_paper.pdf
 Polling-Optimisation-for-Gradient-Descent/
 models/
 videos/
+# stale class-presentation slides, kept out of the repository
+docs/apresentacao_polling.pdf
+docs/apresentacao_polling.pptx
 CLAUDE.md
 notes.txt
 .~lock.*#

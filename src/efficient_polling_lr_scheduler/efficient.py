@@ -13,7 +13,7 @@ from torch.optim import Optimizer
 
 from ._snapshot import StateSnapshot
 from .closures import Closure
-from .polling import PollingOptimizer, StepInfo, _split_module
+from .polling import _SGD_KEYS, PollingOptimizer, StepInfo, _split_module
 
 __all__ = ["TRIGGERS", "EfficientPollingOptimizer", "EfficientPollingSGD"]
 
@@ -335,7 +335,7 @@ class EfficientPollingSGD(EfficientPollingOptimizer):
     ``poll_seed``).
     """
 
-    _SGD_KEYS = frozenset({"momentum", "dampening", "weight_decay", "nesterov", "maximize"})
+    _SGD_KEYS = _SGD_KEYS
 
     def __init__(
         self,

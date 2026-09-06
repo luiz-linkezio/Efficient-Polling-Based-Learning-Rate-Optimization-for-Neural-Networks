@@ -4,6 +4,78 @@ All notable changes to the `efficient-polling-lr-scheduler` package are document
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-09-06
+
+Version 1.0.1 was prepared in the source tree but never published; its
+README rewrite is folded in here.
+
+### Added
+
+- `RelativePollingSGD` / `RelativePollingOptimizer` — Relative Polling
+  (experimental): three candidates `{X/m, X, X·m}` around the rate in use, the
+  winner becoming the new centre, the window widening by a multiplier after
+  every blind poll; an uncapped TCP-style backoff whose ceiling
+  is set by blow-ups; restarts that go back to the best point seen (weights,
+  optimizer state, rate and loss trend); an Adam-style loss trend (`Trend`)
+  with a deviation-based spike test; and a downward tie-break on the poll
+  after a restart.
+- `RelativeEpochPolling` — the same method at epoch granularity, driven by
+  `fit(..., epoch_polling=...)` over a plain optimizer: a poll epoch trains
+  once per candidate and keeps the trial with the lowest mean training loss;
+  validation accuracy judges the best point.
+- `PollingOptimizer.poll()` accepts a per-call `candidates` sequence, taken in
+  tie-break order, reports whether the winner was `decisive`, and scores a
+  trial whose loss is not finite as a loss.
+- `fit()` accepts `epoch_polling`.
+- Notebook and `examples/cifar10.py`: `relative` and `relative_epoch`
+  configurations, a `granularities` flag, and an initial-learning-rate
+  robustness sweep with its figure.
+- `results/cifar10/`: the ten Relative Polling runs (two configurations, five
+  seeds) and the four initial-rate runs; figures redrawn with a fourth panel
+  and `images/initial_lr_robustness.png` added. Results are in the README.
+
+### Changed
+
+- README.md and README(pt-br).md rewritten to match the paper: the five-seed,
+  thirteen-configuration study (replacing the single-seed, three-method numbers
+  from 0.1.0), the full comparison table, the cost model, the divergence-guard
+  statistics and the trigger-ablation results.
+
+### Removed
+
+- The presentation video and the presentation slides, and every link to them in
+  both READMEs. They were outdated class material that was never meant to be
+  distributed with the package.
+
+## [1.0.0] - 2026-08-02
+
+### Added
+
+- `SPSSGD` / `SPSOptimizer` — comparison baseline implementing the stochastic
+  Polyak step-size.
+- `ArmijoSGD` / `ArmijoOptimizer` — comparison baseline implementing stochastic
+  Armijo backtracking line search.
+- `trigger` parameter on `EfficientPollingOptimizer`/`EfficientPollingSGD`,
+  exposed as `TRIGGERS = ("backoff", "fixed", "random")`: `"fixed"` and
+  `"random"` are budget-matched ablations of the adaptive backoff trigger,
+  used to isolate the contribution of the trigger from the poll budget itself.
+- `fit`/`train_epoch` accept an optional `torch.optim.lr_scheduler`, so Adam
+  and the standard schedulers (cosine annealing, step decay,
+  ReduceLROnPlateau) run through the same training loop as the polling
+  methods.
+- `examples/plot_results.py` — redraws the paper's figures directly from the
+  JSON files `examples/cifar10.py` records, so a plot can never disagree with
+  the reported table.
+
+### Changed
+
+- `examples/cifar10.py` now runs all eleven configurations (the two polling
+  methods, six comparison methods and two trigger ablations) over multiple
+  seeds via `--seeds`, instead of a single-seed, three-method run.
+- `notebooks/cifar10.ipynb` reworked around one shared training loop for all
+  eleven configurations over five seeds (42–46), replacing the original
+  single-seed, three-method notebook.
+
 ## [0.1.0] - 2026-07-30
 
 First release: the research code from `notebooks/cifar10.ipynb` extracted into an

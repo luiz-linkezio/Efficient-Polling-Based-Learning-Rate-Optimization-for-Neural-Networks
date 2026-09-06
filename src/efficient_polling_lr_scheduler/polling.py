@@ -24,6 +24,9 @@ __all__ = [
 
 DEFAULT_DECADES: tuple[int, ...] = (-2, -1, 0, 1, 2)
 
+#: Keyword arguments the ``*SGD`` convenience classes forward to :class:`torch.optim.SGD`.
+_SGD_KEYS = frozenset({"momentum", "dampening", "weight_decay", "nesterov", "maximize"})
+
 
 def default_candidate_lrs(lr: float, decades: Sequence[int] = DEFAULT_DECADES) -> tuple[float, ...]:
     """Candidate set spanning ``decades`` orders of magnitude around ``lr``.
@@ -45,6 +48,8 @@ class PollResult:
         had_signal: whether the candidates disagreed. All-equal scores mean the
             poll carried no information -- at initialization every candidate
             typically ties on batch accuracy.
+        decisive: whether the winner strictly outscored every other candidate,
+            rather than sharing the top score with one of them.
         optimizer_steps: optimizer steps the poll cost, ``len(candidates) + 1``.
     """
 
@@ -53,6 +58,7 @@ class PollResult:
     post_score: float
     had_signal: bool
     optimizer_steps: int
+    decisive: bool = False
 
 
 @dataclass(frozen=True)
@@ -148,37 +154,54 @@ class PollingOptimizer:
 
     # -- polling ----------------------------------------------------------
 
-    def poll(self, closure: Closure) -> PollResult:
+    def poll(self, closure: Closure, candidates: Sequence[float] | None = None) -> PollResult:
         """Evaluate every candidate from the current point and apply the winner.
 
         The gradient must already have been computed at the current parameters;
         every candidate reuses it.
+
+        Args:
+            closure: scores a trial step; see
+                :class:`~efficient_polling_lr_scheduler.closures.Closure`.
+            candidates: learning rates to try on this poll, in tie-break order:
+                on equal scores the earlier one wins. Defaults to the fixed
+                candidate set, ascending, so ties favour the smallest rate.
         """
+        lrs = self.candidate_lrs if candidates is None else tuple(float(lr) for lr in candidates)
+        if not lrs:
+            raise ValueError("candidates must not be empty")
         snapshot = self._snapshot
         if snapshot is None:
             snapshot = self._snapshot = StateSnapshot(self.optimizer, self.module)
         else:
             snapshot.capture()
 
-        best_lr = self.candidate_lrs[0]
+        best_lr = lrs[0]
         best_score = -math.inf
         best_loss = math.nan
+        at_top = 0
         lowest = math.inf
         highest = -math.inf
 
-        for lr in self.candidate_lrs:  # ascending, so ``>`` keeps the smallest on ties
+        for lr in lrs:  # in tie-break order, so ``>`` keeps the earlier on ties
             snapshot.restore()
             self._apply_lr(lr)
             self.optimizer.step()
             with torch.no_grad():
                 loss, score = closure()
-            score = float(score)
+            loss_value = float(loss)
+            # A trial that broke the weights scores nothing, whatever its
+            # predictions happen to say.
+            score = float(score) if math.isfinite(loss_value) else -math.inf
             lowest = min(lowest, score)
             highest = max(highest, score)
             if score > best_score:
                 best_score = score
-                best_loss = float(loss)
+                best_loss = loss_value
                 best_lr = lr
+                at_top = 1
+            elif score == best_score:
+                at_top += 1
 
         snapshot.restore()
         self._apply_lr(best_lr)
@@ -189,7 +212,8 @@ class PollingOptimizer:
             post_loss=best_loss,
             post_score=best_score,
             had_signal=highest > lowest,
-            optimizer_steps=len(self.candidate_lrs) + 1,
+            optimizer_steps=len(lrs) + 1,
+            decisive=at_top == 1,
         )
 
     def step(self, closure: Closure) -> StepInfo:

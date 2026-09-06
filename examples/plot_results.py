@@ -31,6 +31,8 @@ LABELS = {
     "armijo": "Armijo line search",
     "efficient_fixed": "Ablation: fixed interval",
     "efficient_random": "Ablation: random trigger",
+    "relative": "Relative Polling (ours, per batch)",
+    "relative_epoch": "Relative Polling (ours, per epoch)",
 }
 
 
