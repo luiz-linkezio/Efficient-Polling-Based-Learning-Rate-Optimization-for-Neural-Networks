@@ -40,7 +40,7 @@ from .polling import (
 )
 from .training import EpochStats, History, evaluate, fit, train_epoch
 
-__version__ = "1.1.0"
+__version__ = "2.0.0"
 
 __all__ = [
     "ArmijoOptimizer",
