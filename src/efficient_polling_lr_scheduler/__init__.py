@@ -26,6 +26,11 @@ from ._snapshot import StateSnapshot
 from .baselines import SPSSGD, ArmijoOptimizer, ArmijoSGD, SPSOptimizer
 from .closures import Closure, ScoreFn, accuracy, make_closure, negative_loss
 from .efficient import TRIGGERS, EfficientPollingOptimizer, EfficientPollingSGD
+from .efficient_relative import (
+    EfficientRelativeEpochPolling,
+    EfficientRelativePollingOptimizer,
+    EfficientRelativePollingSGD,
+)
 from .polling import (
     PollingOptimizer,
     PollingSGD,
@@ -33,10 +38,9 @@ from .polling import (
     StepInfo,
     default_candidate_lrs,
 )
-from .relative import RelativeEpochPolling, RelativePollingOptimizer, RelativePollingSGD
 from .training import EpochStats, History, evaluate, fit, train_epoch
 
-__version__ = "1.1.0"
+__version__ = "2.0.0"
 
 __all__ = [
     "ArmijoOptimizer",
@@ -44,14 +48,14 @@ __all__ = [
     "Closure",
     "EfficientPollingOptimizer",
     "EfficientPollingSGD",
+    "EfficientRelativeEpochPolling",
+    "EfficientRelativePollingOptimizer",
+    "EfficientRelativePollingSGD",
     "EpochStats",
     "History",
     "PollResult",
     "PollingOptimizer",
     "PollingSGD",
-    "RelativeEpochPolling",
-    "RelativePollingOptimizer",
-    "RelativePollingSGD",
     "SPSOptimizer",
     "SPSSGD",
     "ScoreFn",

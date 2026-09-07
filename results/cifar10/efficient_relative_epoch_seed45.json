@@ -1,5 +1,5 @@
 {
-  "method": "relative_epoch",
+  "method": "efficient_relative_epoch",
   "seed": 45,
   "epochs": 150,
   "lr0": 0.001,

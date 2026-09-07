@@ -207,7 +207,7 @@ def fit(
             argument. Only meaningful for a plain optimizer -- a polling
             optimizer overwrites the learning rate every time it polls.
         epoch_polling: optional epoch-level controller such as
-            :class:`~efficient_polling_lr_scheduler.relative.RelativeEpochPolling`,
+            :class:`~efficient_polling_lr_scheduler.relative.EfficientRelativeEpochPolling`,
             which takes over each epoch through its ``run_epoch`` method:
             training the epoch once per candidate rate on poll epochs, blind
             otherwise. Requires a plain optimizer.
