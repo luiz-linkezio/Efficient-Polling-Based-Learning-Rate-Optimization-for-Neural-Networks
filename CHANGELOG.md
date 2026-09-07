@@ -4,6 +4,28 @@ All notable changes to the `efficient-polling-lr-scheduler` package are document
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-09-07
+
+### Changed
+
+- **Breaking:** Relative Polling is now **Efficient Relative Polling**, so the
+  method sits inside the family the package is named after. The three classes
+  `RelativePollingSGD`, `RelativePollingOptimizer` and `RelativeEpochPolling`
+  become `EfficientRelativePollingSGD`, `EfficientRelativePollingOptimizer` and
+  `EfficientRelativeEpochPolling`; the module `relative.py` becomes
+  `efficient_relative.py`. Nothing else about the method changed, and no
+  measured number moved. Code written against 1.1.0 has to rename the imports;
+  1.1.0 was yanked from PyPI, since it was published the day before and the old
+  names never had users.
+- The experiment keys `relative` and `relative_epoch` become
+  `efficient_relative` and `efficient_relative_epoch`, in the notebook, in
+  `examples/cifar10.py`, in the recorded runs under `results/cifar10/` and in
+  the figures.
+- In the figures, the short legend label for Efficient Polling was `ours`, which
+  read as if the relative variant were somebody else's work. Both are ours, so
+  the labels now name the methods: `Efficient`, `Eff. relative`,
+  `Eff. rel. epoch`.
+
 ## [1.1.0] - 2026-09-06
 
 Version 1.0.1 was prepared in the source tree but never published; its

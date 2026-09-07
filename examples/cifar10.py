@@ -46,9 +46,9 @@ from efficient_polling_lr_scheduler import (
     SPSSGD,
     ArmijoSGD,
     EfficientPollingSGD,
+    EfficientRelativeEpochPolling,
+    EfficientRelativePollingSGD,
     PollingSGD,
-    RelativeEpochPolling,
-    RelativePollingSGD,
     evaluate,
     fit,
 )
@@ -67,8 +67,8 @@ METHODS = (
     "armijo",
     "efficient_fixed",
     "efficient_random",
-    "relative",
-    "relative_epoch",
+    "efficient_relative",
+    "efficient_relative_epoch",
 )
 
 LABELS = {
@@ -83,8 +83,8 @@ LABELS = {
     "armijo": "Armijo line search",
     "efficient_fixed": "  ablation: fixed interval",
     "efficient_random": "  ablation: random trigger",
-    "relative": "Relative Polling (ours, per batch)",
-    "relative_epoch": "Relative Polling (ours, per epoch)",
+    "efficient_relative": "Efficient Relative Polling (ours, per batch)",
+    "efficient_relative_epoch": "Efficient Relative Polling (ours, per epoch)",
 }
 
 
@@ -240,9 +240,9 @@ def build_optimizer(method: str, model: nn.Module, args: argparse.Namespace, see
         )
     if method == "polling":
         return PollingSGD(model, lr=args.lr), None
-    if method == "relative":
+    if method == "efficient_relative":
         return (
-            RelativePollingSGD(
+            EfficientRelativePollingSGD(
                 model,
                 lr=args.lr,
                 multiplier=args.multiplier,
@@ -252,7 +252,7 @@ def build_optimizer(method: str, model: nn.Module, args: argparse.Namespace, see
             ),
             None,
         )
-    if method == "relative_epoch":
+    if method == "efficient_relative_epoch":
         # Per epoch the controller drives a plain SGD; see build_epoch_polling().
         return torch.optim.SGD(model.parameters(), lr=args.lr), None
     # The paper pins the rollback threshold at twice the random-guess loss for
@@ -282,10 +282,10 @@ def _relative_lr_max(args: argparse.Namespace) -> float | None:
 
 
 def build_epoch_polling(method: str, args: argparse.Namespace):
-    """The epoch-level controller for ``relative_epoch``; ``None`` for every other method."""
-    if method != "relative_epoch":
+    """The epoch-level controller for ``efficient_relative_epoch``; ``None`` otherwise."""
+    if method != "efficient_relative_epoch":
         return None
-    return RelativeEpochPolling(
+    return EfficientRelativeEpochPolling(
         multiplier=args.multiplier,
         lr_max=_relative_lr_max(args),
         rollback_loss=2.0 * math.log(10),
@@ -433,19 +433,19 @@ def parse_args() -> argparse.Namespace:
         "--multiplier",
         type=float,
         default=10.0,
-        help="Relative Polling: spacing between the three candidates {X/m, X, X*m}",
+        help="Efficient Relative Polling: spacing between the three candidates {X/m, X, X*m}",
     )
     parser.add_argument(
         "--spike-z",
         type=float,
         default=3.0,
-        help="Relative Polling, per batch: deviations above the loss trend that force a poll",
+        help="Efficient Relative Polling, per batch: deviations above the trend that force a poll",
     )
     parser.add_argument(
         "--relative-lr-max",
         type=float,
         default=0.1,
-        help="ceiling for Relative Polling's candidates, the same 1e-1 every other "
+        help="ceiling for Efficient Relative Polling's candidates, the same 1e-1 every other "
         "method is held to; pass inf to let the window roam. For the initial-rate "
         "robustness runs, combine --lr with a separate --results-dir",
     )

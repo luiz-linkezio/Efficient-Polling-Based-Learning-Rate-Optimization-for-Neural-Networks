@@ -1,5 +1,5 @@
 {
-  "method": "relative_lr1e-05",
+  "method": "efficient_relative_lr1e-05",
   "seed": 42,
   "epochs": 150,
   "lr0": 1e-05,
