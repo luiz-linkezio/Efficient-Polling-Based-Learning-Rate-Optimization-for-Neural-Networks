@@ -1,4 +1,4 @@
-"""Relative Polling: candidates around the current rate, polled on a TCP-style schedule.
+"""Efficient Relative Polling: candidates around the current rate, polled on a TCP-style schedule.
 
 Where the base method polls a *fixed* candidate set, this variant asks the user
 for one learning rate and one multiplier ``m`` and polls three candidates around
@@ -53,9 +53,9 @@ __all__ = [
     "Backoff",
     "Window",
     "Trend",
-    "RelativePollingOptimizer",
-    "RelativePollingSGD",
-    "RelativeEpochPolling",
+    "EfficientRelativePollingOptimizer",
+    "EfficientRelativePollingSGD",
+    "EfficientRelativeEpochPolling",
 ]
 
 
@@ -309,7 +309,7 @@ def _check_z(name: str, z: float | None) -> float | None:
     return float(z)
 
 
-class RelativePollingOptimizer(PollingOptimizer):
+class EfficientRelativePollingOptimizer(PollingOptimizer):
     """Polls ``{X/m, X, X*m}`` around the current rate, on a TCP-style schedule.
 
     See the module docstring for the method. Compared with
@@ -597,14 +597,14 @@ class RelativePollingOptimizer(PollingOptimizer):
         )
 
 
-class RelativePollingSGD(RelativePollingOptimizer):
-    """:class:`RelativePollingOptimizer` over plain SGD.
+class EfficientRelativePollingSGD(EfficientRelativePollingOptimizer):
+    """:class:`EfficientRelativePollingOptimizer` over plain SGD.
 
     Args:
         params: parameters to optimize, or the model itself (in which case its
             buffers are tracked automatically).
         lr: the initial learning rate -- the one rate the user chooses.
-        module: see :class:`RelativePollingOptimizer`.
+        module: see :class:`EfficientRelativePollingOptimizer`.
 
     Remaining keyword arguments configure either :class:`torch.optim.SGD`
     (``momentum``, ``weight_decay``, ``nesterov``, ``dampening``) or the polling
@@ -632,7 +632,7 @@ class RelativePollingSGD(RelativePollingOptimizer):
         )
 
 
-class RelativeEpochPolling:
+class EfficientRelativeEpochPolling:
     """The same method at epoch granularity, driven by :func:`fit`.
 
     A poll here is a whole epoch: from one snapshot, the epoch is trained once

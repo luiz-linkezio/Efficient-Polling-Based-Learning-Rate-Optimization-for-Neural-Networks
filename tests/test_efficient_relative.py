@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from efficient_polling_lr_scheduler.relative import Backoff, Trend
+from efficient_polling_lr_scheduler.efficient_relative import Backoff, Trend
 
 # -- Backoff: the TCP-style poll interval ----------------------------------
 
@@ -223,14 +223,14 @@ def test_trend_state_round_trip() -> None:
     assert restored.count == trend.count
 
 
-# -- RelativePollingSGD: the per-batch driver ---------------------------------
+# -- EfficientRelativePollingSGD: the per-batch driver ---------------------------------
 
 import torch  # noqa: E402
 from torch import nn  # noqa: E402
 
 from conftest import TinyNet, make_loader  # noqa: E402
 from efficient_polling_lr_scheduler import (  # noqa: E402
-    RelativePollingSGD,
+    EfficientRelativePollingSGD,
     fit,
     make_closure,
 )
@@ -275,7 +275,7 @@ def assert_params_equal(model: nn.Module, saved: list[torch.Tensor]) -> None:
 def relative(batch):
     inputs, _ = batch
     model = TinyNet()
-    poller = RelativePollingSGD(model, lr=1e-3, multiplier=10.0)
+    poller = EfficientRelativePollingSGD(model, lr=1e-3, multiplier=10.0)
     return poller, Scripted(model, poller.optimizer, inputs, winner=1e-3), model
 
 
@@ -362,7 +362,7 @@ def test_a_spike_poll_that_confirms_the_rate_does_not_grow_the_interval(relative
 def test_spike_z_none_disables_the_spike_tier(batch) -> None:
     inputs, _ = batch
     model = TinyNet()
-    poller = RelativePollingSGD(model, lr=1e-3, spike_z=None, rollback_loss=1e9)
+    poller = EfficientRelativePollingSGD(model, lr=1e-3, spike_z=None, rollback_loss=1e9)
     closure = Scripted(model, poller.optimizer, inputs, winner=1e-3)
     for _ in range(80):
         poller.step(closure)
@@ -450,7 +450,7 @@ def test_a_restart_zeroes_the_interval_and_halves_the_ceiling(relative) -> None:
 def test_lr_max_folds_the_upper_candidate_into_the_bound(batch) -> None:
     inputs, _ = batch
     model = TinyNet()
-    poller = RelativePollingSGD(model, lr=1e-2, lr_max=1e-2)
+    poller = EfficientRelativePollingSGD(model, lr=1e-2, lr_max=1e-2)
     closure = Scripted(model, poller.optimizer, inputs, winner=1e-2)
 
     info = poller.step(closure)
@@ -460,7 +460,7 @@ def test_lr_max_folds_the_upper_candidate_into_the_bound(batch) -> None:
 def test_lr_min_folds_the_lower_candidate_into_the_bound(batch) -> None:
     inputs, _ = batch
     model = TinyNet()
-    poller = RelativePollingSGD(model, lr=1e-2, lr_min=1e-2)
+    poller = EfficientRelativePollingSGD(model, lr=1e-2, lr_min=1e-2)
     closure = Scripted(model, poller.optimizer, inputs, winner=1e-2)
 
     info = poller.step(closure)
@@ -470,7 +470,7 @@ def test_lr_min_folds_the_lower_candidate_into_the_bound(batch) -> None:
 def test_a_non_finite_loss_before_any_poll_is_survivable(batch) -> None:
     inputs, _ = batch
     model = TinyNet()
-    poller = RelativePollingSGD(model, lr=1e-3)
+    poller = EfficientRelativePollingSGD(model, lr=1e-3)
     closure = Scripted(model, poller.optimizer, inputs, winner=1e-3, loss=math.inf)
 
     assert poller.step(closure).rolled_back
@@ -492,7 +492,7 @@ def test_state_dict_round_trip(relative) -> None:
         poller.step(closure)
     saved = poller.state_dict()
 
-    restored = RelativePollingSGD(TinyNet(), lr=1e-3)
+    restored = EfficientRelativePollingSGD(TinyNet(), lr=1e-3)
     restored.load_state_dict(saved)
 
     assert restored.backoff.state_dict() == poller.backoff.state_dict()
@@ -505,21 +505,21 @@ def test_state_dict_round_trip(relative) -> None:
 
 def test_rejects_a_multiplier_not_above_one(model: TinyNet) -> None:
     with pytest.raises(ValueError, match="multiplier"):
-        RelativePollingSGD(model, lr=1e-3, multiplier=1.0)
+        EfficientRelativePollingSGD(model, lr=1e-3, multiplier=1.0)
 
 
 def test_rejects_inverted_bounds(model: TinyNet) -> None:
     with pytest.raises(ValueError, match="lr_min"):
-        RelativePollingSGD(model, lr=1e-3, lr_min=1e-2, lr_max=1e-3)
+        EfficientRelativePollingSGD(model, lr=1e-3, lr_min=1e-2, lr_max=1e-3)
 
 
 def test_rejects_an_initial_rate_outside_the_bounds(model: TinyNet) -> None:
     with pytest.raises(ValueError, match="lr"):
-        RelativePollingSGD(model, lr=1e-3, lr_max=1e-4)
+        EfficientRelativePollingSGD(model, lr=1e-3, lr_max=1e-4)
 
 
 def test_sgd_and_polling_kwargs_are_routed(model: TinyNet) -> None:
-    poller = RelativePollingSGD(model, lr=1e-3, momentum=0.9, multiplier=3.0)
+    poller = EfficientRelativePollingSGD(model, lr=1e-3, momentum=0.9, multiplier=3.0)
     assert poller.optimizer.param_groups[0]["momentum"] == 0.9
     assert poller.multiplier == 3.0
 
@@ -527,7 +527,7 @@ def test_sgd_and_polling_kwargs_are_routed(model: TinyNet) -> None:
 def test_training_makes_progress_on_real_data(loss_fn) -> None:
     torch.manual_seed(3)
     model = TinyNet()
-    poller = RelativePollingSGD(model, lr=1e-3)
+    poller = EfficientRelativePollingSGD(model, lr=1e-3)
 
     history = fit(
         model,
@@ -554,7 +554,7 @@ def test_polls_a_small_fraction_of_batches_once_there_is_signal(loss_fn) -> None
     inputs = torch.randn(256, 16)
     targets = torch.randint(0, 10, (256,))
     model = nn.Sequential(nn.Linear(16, 32), nn.ReLU(), nn.Linear(32, 10))
-    poller = RelativePollingSGD(model, lr=1e-3, lr_max=1e-1)
+    poller = EfficientRelativePollingSGD(model, lr=1e-3, lr_max=1e-1)
     closure = make_closure(model, loss_fn, inputs, targets)
 
     infos = [poller.step(closure) for _ in range(1000)]
@@ -568,16 +568,16 @@ def test_polls_a_small_fraction_of_batches_once_there_is_signal(loss_fn) -> None
 def test_selects_by_real_batch_accuracy(batch, loss_fn) -> None:
     inputs, targets = batch
     model = TinyNet()
-    poller = RelativePollingSGD(model, lr=1e-3)
+    poller = EfficientRelativePollingSGD(model, lr=1e-3)
     closure = make_closure(model, loss_fn, inputs, targets)
     info = poller.step(closure)
     assert info.polled
     assert info.post_score is not None
 
 
-# -- RelativeEpochPolling: the per-epoch driver -------------------------------
+# -- EfficientRelativeEpochPolling: the per-epoch driver -------------------------------
 
-from efficient_polling_lr_scheduler import EpochStats, RelativeEpochPolling  # noqa: E402
+from efficient_polling_lr_scheduler import EfficientRelativeEpochPolling, EpochStats  # noqa: E402
 
 
 class FakeTraining:
@@ -630,7 +630,7 @@ def epoch_setup():
     model = TinyNet()
     optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
     fake = FakeTraining(model, optimizer, winner=1e-3)
-    controller = RelativeEpochPolling(multiplier=10.0)
+    controller = EfficientRelativeEpochPolling(multiplier=10.0)
     return controller, fake, model, optimizer
 
 
@@ -747,7 +747,7 @@ def test_rollback_threshold_is_derived_from_the_first_epoch_loss(epoch_setup) ->
 
 def test_epoch_polling_rejects_a_bad_multiplier() -> None:
     with pytest.raises(ValueError, match="multiplier"):
-        RelativeEpochPolling(multiplier=0.5)
+        EfficientRelativeEpochPolling(multiplier=0.5)
 
 
 def test_fit_drives_epoch_polling_through_one_loop(loss_fn) -> None:
@@ -762,7 +762,7 @@ def test_fit_drives_epoch_polling_through_one_loop(loss_fn) -> None:
         optimizer,
         loss_fn,
         epochs=3,
-        epoch_polling=RelativeEpochPolling(),
+        epoch_polling=EfficientRelativeEpochPolling(),
         log_fn=None,
     )
 
@@ -779,10 +779,10 @@ def test_fit_refuses_epoch_polling_over_a_polling_optimizer(loss_fn) -> None:
             model,
             make_loader(n_batches=2),
             make_loader(n_batches=1),
-            RelativePollingSGD(model, lr=1e-3),
+            EfficientRelativePollingSGD(model, lr=1e-3),
             loss_fn,
             epochs=1,
-            epoch_polling=RelativeEpochPolling(),
+            epoch_polling=EfficientRelativeEpochPolling(),
             log_fn=None,
         )
 
@@ -799,7 +799,7 @@ def test_epoch_polling_makes_progress_on_real_data(loss_fn) -> None:
         optimizer,
         loss_fn,
         epochs=12,
-        epoch_polling=RelativeEpochPolling(lr_max=1.0),
+        epoch_polling=EfficientRelativeEpochPolling(lr_max=1.0),
         log_fn=None,
     )
 
@@ -831,7 +831,7 @@ def test_an_unscheduled_confirmation_leaves_the_interval_alone() -> None:
 
 # -- Window: the candidates widen while the criterion is blind ------------------
 
-from efficient_polling_lr_scheduler.relative import Window  # noqa: E402
+from efficient_polling_lr_scheduler.efficient_relative import Window  # noqa: E402
 
 
 def test_window_starts_one_multiplier_wide() -> None:

@@ -28,7 +28,7 @@ O **Efficient Polling** observa que a escolha do poll é altamente redundante �
 | Polling (paper base) | 84,08% | 83,83% | 0,6821 | 100% | 8,05 |
 | **Efficient Polling (nosso)** | **84,37%** | 83,76% | 0,7392 | **5,43%** | **2,81** |
 
-*150 épocas, média ± desvio padrão amostral sobre cinco seeds (42–46), NVIDIA RTX 5070. A comparação completa, treze configurações com a extensão Relative Polling — Adam, três schedulers, SPS, Armijo backtracking e duas variantes de ablação do gatilho — está em [Resultados](#resultados).*
+*150 épocas, média ± desvio padrão amostral sobre cinco seeds (42–46), NVIDIA RTX 5070. A comparação completa, treze configurações com a extensão Efficient Relative Polling — Adam, três schedulers, SPS, Armijo backtracking e duas variantes de ablação do gatilho — está em [Resultados](#resultados).*
 
 O Efficient Polling **iguala** a acurácia do método base (dentro de 0,1 pp no teste) reduzindo os passos do otimizador em **79%** e o tempo por época de 8,05s para **2,81s** — 2,9× mais rápido que o Polling base, indistinguível dos 2,86s do SGD puro.
 
@@ -96,8 +96,8 @@ print(history.best_val_acc, sum(history.polls), sum(history.optimizer_steps))
 |---|---|
 | `EfficientPollingSGD` / `EfficientPollingOptimizer` | método proposto: poll sob demanda, com a guarda anti-divergência |
 | `PollingSGD` / `PollingOptimizer` | método base: poll a cada batch |
-| `RelativePollingSGD` / `RelativePollingOptimizer` | Relative Polling (experimental): três candidatos em torno da taxa em uso, backoff sem teto no estilo TCP, restarts a partir do melhor ponto |
-| `RelativeEpochPolling` | o mesmo método por época, conduzido por `fit(..., epoch_polling=...)` sobre um otimizador comum |
+| `EfficientRelativePollingSGD` / `EfficientRelativePollingOptimizer` | Efficient Relative Polling (experimental): três candidatos em torno da taxa em uso, backoff sem teto no estilo TCP, restarts a partir do melhor ponto |
+| `EfficientRelativeEpochPolling` | o mesmo método por época, conduzido por `fit(..., epoch_polling=...)` sobre um otimizador comum |
 | `SPSSGD` / `SPSOptimizer` | baseline de comparação: Polyak step-size estocástico |
 | `ArmijoSGD` / `ArmijoOptimizer` | baseline de comparação: busca de linha Armijo backtracking estocástica |
 | `TRIGGERS` | os três gatilhos de poll usados na ablação: `"backoff"` (padrão), `"fixed"`, `"random"` |
@@ -147,9 +147,9 @@ Nas cinco execuções oficiais, os polls disparados por spike somaram em média 
 | `β` | `0,9` | decaimento da EMA da perda |
 | `ℓ_rb` | `2·ln 10 ≈ 4,61` | limiar de rollback (nível 1) |
 
-### Relative Polling (extensão proposta, por batch)
+### Efficient Relative Polling (extensão proposta, por batch)
 
-Os dois métodos acima escolhem dentro de uma grade *fixa*, e nas runs registradas a taxa escolhida passa a maior parte do treino encostada nas bordas dessa grade: `1e-1` na primeira fase, `1e-5` depois do annealing. O Relative Polling dispensa a grade. O usuário escolhe uma taxa de aprendizado e um multiplicador `m`, e cada poll testa três candidatos em torno da taxa em uso; o vencedor vira o novo centro:
+Os dois métodos acima escolhem dentro de uma grade *fixa*, e nas runs registradas a taxa escolhida passa a maior parte do treino encostada nas bordas dessa grade: `1e-1` na primeira fase, `1e-5` depois do annealing. O Efficient Relative Polling dispensa a grade. O usuário escolhe uma taxa de aprendizado e um multiplicador `m`, e cada poll testa três candidatos em torno da taxa em uso; o vencedor vira o novo centro:
 
 ```
 C_t = {X/m, X, X·m}        X ← argmax acc(θ̂, batch)
@@ -162,9 +162,9 @@ Quando um poll volta cego — todos os candidatos com a mesma pontuação, o que
 3. **Tendência no estilo Adam.** A tendência da perda é uma média exponencial com correção de viés mais um segundo momento dos desvios, de modo que um spike é uma perda mais de `z` desvios acima da tendência, em vez de uma razão fixa sobre ela.
 
 ```python
-from efficient_polling_lr_scheduler import RelativePollingSGD
+from efficient_polling_lr_scheduler import EfficientRelativePollingSGD
 
-optimizer = RelativePollingSGD(model, lr=1e-3, multiplier=10.0, lr_max=1e-1)
+optimizer = EfficientRelativePollingSGD(model, lr=1e-3, multiplier=10.0, lr_max=1e-1)
 ```
 
 | Símbolo | Padrão | Papel |
@@ -180,14 +180,14 @@ optimizer = RelativePollingSGD(model, lr=1e-3, multiplier=10.0, lr_max=1e-1)
 | Método | Melhor Val | Acurácia Teste | Perda Teste | Polls | Passos do otimizador | s/Época |
 |---|---|---|---|---|---|---|
 | Efficient Polling (grade fixa) | 84,37% ± 0,91% | 83,76% ± 0,72% | 0,7392 ± 0,0201 | 5,43% | 134.261 | 2,81 ± 0,02 |
-| **Relative Polling, por batch** | 84,68% ± 0,77% | **84,11% ± 0,41%** | 0,9803 ± 0,1398 | 7,25% ± 6,25% | 127.379 | 2,82 ± 0,25 |
-| Relative Polling, por época | 48,18% ± 2,61% | 47,99% ± 1,91% | 1,4184 ± 0,0450 | 61,33% | 234.432 | 6,47 ± 0,52 |
+| **Efficient Relative Polling, por batch** | 84,68% ± 0,77% | **84,11% ± 0,41%** | 0,9803 ± 0,1398 | 7,25% ± 6,25% | 127.379 | 2,82 ± 0,25 |
+| Efficient Relative Polling, por época | 48,18% ± 2,61% | 47,99% ± 1,91% | 1,4184 ± 0,0450 | 61,33% | 234.432 | 6,47 ± 0,52 |
 
-Por batch, o Relative Polling alcança a acurácia de teste do Armijo backtracking (84,09%, a melhor da tabela abaixo) ao custo do SGD puro, com poll em 7% dos batches; um poll custa 4 passos do otimizador em vez de 6, então ele dá menos passos que o Efficient Polling. Ele encontra a mesma primeira fase em `1e-1` e depois se assenta em `1e-2` da época ~40 até o fim, em vez de anelar até `1e-5`: quando a acurácia do batch satura o critério fica cego, empates mantêm a taxa, e nenhum estouro forçou um degrau para baixo (um restart em cinco runs). Esse patamar é o que custa perda de teste — o treino continua em `1e-2` sobre um conjunto de treino que ele já ajusta, e as predições ficam superconfiantes. A fração de polls varia por seed (1,8% a 16,3%): uma seed que fica caçando entre `1e-1` e `1e-2` zera o intervalo a cada mudança.
+Por batch, o Efficient Relative Polling alcança a acurácia de teste do Armijo backtracking (84,09%, a melhor da tabela abaixo) ao custo do SGD puro, com poll em 7% dos batches; um poll custa 4 passos do otimizador em vez de 6, então ele dá menos passos que o Efficient Polling. Ele encontra a mesma primeira fase em `1e-1` e depois se assenta em `1e-2` da época ~40 até o fim, em vez de anelar até `1e-5`: quando a acurácia do batch satura o critério fica cego, empates mantêm a taxa, e nenhum estouro forçou um degrau para baixo (um restart em cinco runs). Esse patamar é o que custa perda de teste — o treino continua em `1e-2` sobre um conjunto de treino que ele já ajusta, e as predições ficam superconfiantes. A fração de polls varia por seed (1,8% a 16,3%): uma seed que fica caçando entre `1e-1` e `1e-2` zera o intervalo a cada mudança.
 
 **A taxa que o usuário escolhe não precisa estar certa.** Partindo de duas décadas abaixo ou acima do padrão, na seed 42:
 
-| Início | Efficient Polling (grade presa ao início) | Relative Polling |
+| Início | Efficient Polling (grade presa ao início) | Efficient Relative Polling |
 |---|---|---|
 | `1e-5` | 10,04% — nunca sai de `1e-7` | 84,72% |
 | `1e-3` (padrão) | 83,97% | 84,67% |
@@ -197,13 +197,13 @@ De qualquer início a janela relativa está em `1e-1` na primeira época e repro
 
 ![Robustez à taxa inicial](https://raw.githubusercontent.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/main/images/initial_lr_robustness.png)
 
-**Por época é um resultado negativo.** `RelativeEpochPolling`, conduzido por `fit(..., epoch_polling=...)`, treina uma época inteira por candidato a partir de um snapshot e mantém a que teve a menor loss média de treino. Ele leva a taxa até `1e-5` em trinta épocas e estaciona em 48%; selecionar pela acurácia de validação no fim da época fez o mesmo, até `1e-8` e 45%. Qualquer nota de uma única época premia a suavidade de um passo pequeno em vez do progresso de um passo grande, e uma época cega em `1e-1` não tem a proteção por passo que o método por batch ganha com os polls de spike. A granularidade que funciona é o batch.
+**Por época é um resultado negativo.** `EfficientRelativeEpochPolling`, conduzido por `fit(..., epoch_polling=...)`, treina uma época inteira por candidato a partir de um snapshot e mantém a que teve a menor loss média de treino. Ele leva a taxa até `1e-5` em trinta épocas e estaciona em 48%; selecionar pela acurácia de validação no fim da época fez o mesmo, até `1e-8` e 45%. Qualquer nota de uma única época premia a suavidade de um passo pequeno em vez do progresso de um passo grande, e uma época cega em `1e-1` não tem a proteção por passo que o método por batch ganha com os polls de spike. A granularidade que funciona é o batch.
 
 ---
 
 ## Resultados
 
-A tabela abaixo reproduz a Tabela I do artigo, onze configurações, mais as duas configurações do Relative Polling adicionadas depois do artigo; cada uma executada em cinco seeds (42–46), 150 épocas, batch 64 (704 batches/época, 105.600/execução). Reportada como média ± desvio padrão amostral.
+A tabela abaixo reproduz a Tabela I do artigo, onze configurações, mais as duas configurações do Efficient Relative Polling adicionadas depois do artigo; cada uma executada em cinco seeds (42–46), 150 épocas, batch 64 (704 batches/época, 105.600/execução). Reportada como média ± desvio padrão amostral.
 
 | Método | Melhor Val | Acc Teste | Perda Teste | Poll | Passos do Otimizador | s/Época |
 |---|---|---|---|---|---|---|
@@ -218,7 +218,7 @@ A tabela abaixo reproduz a Tabela I do artigo, onze configurações, mais as dua
 | **Efficient Polling (nosso)** | 84,37% ± 0,91% | 83,76% ± 0,72% | 0,7392 ± 0,0201 | **5,43%** | **134.261** | **2,81 ± 0,02** |
 | ↳ ablação: intervalo fixo | 69,20% ± 33,49% | 68,91% ± 32,91% | 1,0999 ± 0,6782 | 5,43% | 134.286 | 2,81 ± 0,01 |
 | ↳ ablação: gatilho aleatório | 84,45% ± 0,61% | 84,02% ± 0,54% | 0,8116 ± 0,0235 | 5,77% | 136.085 | 2,83 ± 0,01 |
-| **Relative Polling (nosso, por batch)** | 84,68% ± 0,77% | **84,11% ± 0,41%** | 0,9803 ± 0,1398 | 7,25% | 127.379 | 2,82 ± 0,25 |
+| **Efficient Relative Polling (nosso, por batch)** | 84,68% ± 0,77% | **84,11% ± 0,41%** | 0,9803 ± 0,1398 | 7,25% | 127.379 | 2,82 ± 0,25 |
 | ↳ por época | 48,18% ± 2,61% | 47,99% ± 1,91% | 1,4184 ± 0,0450 | 61,33% | 234.432 | 6,47 ± 0,52 |
 
 Os três schedulers começam em `1e-1` (o topo do conjunto de candidatos) em vez da LR base `1e-3` do baseline, já que um cronograma de decaimento precisa de algo de onde decair; SPS e Armijo são limitados a esse mesmo `1e-1`, de modo que nenhum método pode dar um passo que os outros nunca puderam considerar. Apesar disso, cosine annealing, step decay e ReduceLROnPlateau divergem para `NaN` por volta da época 28 na maioria das seeds (5/5, 4/5 e 1/5, respectivamente) — a tabela ainda os credita com o melhor checkpoint pré-divergência, já que cada método é avaliado na sua própria melhor época de validação. As duas variantes de polling mantêm essa mesma `1e-1` por cerca de trinta épocas ao longo de suas 25 execuções combinadas, sem uma única falha: o que quebra os schedulers não é a taxa em si, mas a ausência de uma verificação por passo sobre ela.
@@ -261,7 +261,7 @@ O **controle de intervalo fixo expõe uma falha real**: em 4/5 seeds ele iguala 
 ├── src/efficient_polling_lr_scheduler/     # o pacote instalável
 │   ├── polling.py             # método base (Tan et al.)
 │   ├── efficient.py           # Efficient Polling (nosso), incl. os gatilhos fixo/aleatório
-│   ├── relative.py            # Relative Polling (nosso): janela que alarga, backoff estilo TCP, restarts no melhor ponto
+│   ├── efficient_relative.py  # Efficient Relative Polling (nosso): janela que alarga, backoff estilo TCP, restarts no melhor ponto
 │   ├── baselines.py           # otimizadores de comparação SPS e Armijo backtracking
 │   ├── _snapshot.py           # salvamento/restauração exata do estado nos testes
 │   ├── closures.py            # closures do batch e critérios de seleção
