@@ -13,7 +13,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-from benchmark_datasets import (
+
+from benchmark.datasets import (
     DATASETS,
     ArrayDataset,
     build_split,
@@ -268,14 +269,6 @@ def test_a_constant_dataset_gets_a_nonzero_std(tmp_path: Path) -> None:
 
 def test_the_dataset_reports_its_length(cifar10_dir: Path) -> None:
     assert len(build_split("cifar10", cifar10_dir, train=True)) == 10
-
-
-def test_cifar10_figures_keep_the_names_the_paper_already_cites() -> None:
-    """The paper's LaTeX includes images/<name>.png by name; a second dataset
-    writing to the same files would silently replace its figures."""
-    assert spec_for("cifar10").figure_suffix == ""
-    assert spec_for("mnist").figure_suffix == "_mnist"
-    assert spec_for("fashion_mnist").figure_suffix == "_fashion_mnist"
 
 
 def test_a_directory_named_like_the_file_is_skipped(tmp_path: Path) -> None:

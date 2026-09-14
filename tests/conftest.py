@@ -1,17 +1,8 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
 import torch
 from torch import nn
-
-# The examples are part of what this repository publishes, and their data
-# loaders decide what every sweep is actually trained on, so they are tested
-# here too. They are scripts rather than a package: put their directory on the
-# path the way running them does.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples"))
 
 
 @pytest.fixture(autouse=True)

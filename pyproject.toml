@@ -48,10 +48,11 @@ classifiers = [
 dependencies = ["torch>=2.0"]
 
 [project.optional-dependencies]
-# numpy is what the example loaders parse the datasets with, and the suite
-# covers those loaders, so it belongs to a test install too.
-dev = ["pytest>=8.0", "numpy>=1.24"]
-examples = ["numpy>=1.24", "matplotlib>=3.7"]
+# The suite also covers the benchmark (its dataset readers parse with numpy and
+# its figures draw with matplotlib), and nbstripout keeps notebook outputs out
+# of commits.
+dev = ["pytest>=8.0", "numpy>=1.24", "matplotlib>=3.7", "nbstripout>=0.8"]
+benchmark = ["numpy>=1.24", "matplotlib>=3.7"]
 
 [project.urls]
 Homepage = "https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks"
@@ -69,7 +70,7 @@ packages = ["src/efficient_polling_lr_scheduler"]
 include = [
     "/src",
     "/tests",
-    "/examples",
+    "/benchmark",
     "/README.md",
     "/CHANGELOG.md",
     "/LICENSE",
@@ -78,11 +79,13 @@ include = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# The benchmark package lives at the repository root, next to src/.
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
-src = ["src", "tests"]
-# The notebook is the original research artifact; it is not held to package style.
+src = [".", "src", "tests"]
+# The notebook only drives the benchmark package, which is where its code is held to style.
 extend-exclude = ["notebooks"]
 
 [tool.ruff.lint]

@@ -101,15 +101,6 @@ class DatasetSpec:
             raise ValueError(f"{self.name} is not an image dataset")
         return self.input_shape[1]
 
-    @property
-    def figure_suffix(self) -> str:
-        """What this dataset's figures append to a file name.
-
-        CIFAR-10 appends nothing: the paper's LaTeX includes those images by
-        name, and a later sweep on another dataset must not overwrite them.
-        """
-        return "" if self.key == "cifar10" else f"_{self.key}"
-
 
 # --- CIFAR: pickled batches --------------------------------------------------
 

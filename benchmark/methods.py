@@ -1,0 +1,268 @@
+"""The thirteen configurations the paper compares, and how each one is built.
+
+Every method trains the same network, from the same weights, on the same
+batches. What :func:`build_optimizer` returns is the only thing that differs
+between two runs of one seed.
+
+A new method is a subclass of ``PollingOptimizer`` in the package, one entry in
+:data:`LABELS` and one branch in :func:`build_optimizer`.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+import torch
+from torch import nn
+
+from efficient_polling_lr_scheduler import (
+    SPSSGD,
+    ArmijoSGD,
+    EfficientPollingSGD,
+    EfficientRelativeEpochPolling,
+    EfficientRelativePollingSGD,
+    PollingSGD,
+)
+
+from .datasets import DatasetSpec, blowup_loss
+
+__all__ = [
+    "ABLATIONS",
+    "LABELS",
+    "METHODS",
+    "Ablation",
+    "Comparators",
+    "EfficientPolling",
+    "EfficientRelative",
+    "Hyperparameters",
+    "Training",
+    "build_epoch_polling",
+    "build_optimizer",
+    "run_key",
+]
+
+# In table order, which every table and figure follows: the fixed rate, the
+# schedulers, the two rules that measure the step size on the batch, then
+# polling and its variants.
+LABELS = {
+    "baseline": "SGD (fixed 1e-3)",
+    "adam": "Adam (1e-3)",
+    "cosine": "SGD + cosine annealing",
+    "step": "SGD + step decay",
+    "plateau": "SGD + ReduceLROnPlateau",
+    "sps": "SPS (Polyak)",
+    "armijo": "Armijo line search",
+    "polling": "Polling (base paper)",
+    "efficient": "Efficient Polling (ours)",
+    "efficient_fixed": "  ablation: fixed interval",
+    "efficient_random": "  ablation: random trigger",
+    "efficient_relative": "Efficient Relative Polling (ours, per batch)",
+    "efficient_relative_epoch": "Efficient Relative Polling (ours, per epoch)",
+}
+
+METHODS = tuple(LABELS)
+
+# The two variants that swap Efficient Polling's trigger and keep everything else.
+ABLATIONS = ("efficient_fixed", "efficient_random")
+
+
+@dataclass
+class Training:
+    """What every method shares."""
+
+    epochs: int = 150
+    lr: float = 1e-3  # the baseline's rate, and where every adaptive method starts
+    batch_size: int = 64
+    val_fraction: float = 0.1
+    # Changes the loading speed, never the batches: the samples are already in memory.
+    num_workers: int = 0
+
+
+@dataclass
+class Comparators:
+    """Settings for the methods the proposal is compared against.
+
+    ``scheduled_lr`` is the *top* of the polling candidate set, not the
+    baseline's 1e-3: a decay schedule that starts where the baseline sits has
+    nothing to decay from, and comparing against a deliberately crippled
+    schedule is how a paper gets accused of picking a straw man.
+
+    ``sps_max_lr`` and ``armijo_lr_max`` are that same ceiling, so no adaptive
+    method may take a step the others were never allowed to consider.
+    """
+
+    scheduled_lr: float = 1e-1
+    step_size: int = 50  # 1e-1, then 1e-2 from epoch 50 and 1e-3 from epoch 100
+    step_gamma: float = 0.1
+    plateau_factor: float = 0.5
+    plateau_patience: int = 5
+    cosine_eta_min: float = 0.0
+    sps_max_lr: float = 1e-1
+    armijo_lr_max: float = 1e-1
+    armijo_alpha: float = 1e-4
+    armijo_beta: float = 0.5
+    armijo_max_iters: int = 10
+
+
+@dataclass
+class EfficientPolling:
+    """Efficient Polling. The candidates are the paper's grid, two decades
+    either side of the starting rate, and the rollback threshold is twice the
+    loss of a uniform guess over the dataset's classes."""
+
+    max_poll_interval: int = 64  # the backoff cap: blind steps between two polls
+    spike_factor: float = 3.0  # poll at once when the batch loss exceeds this times its EMA
+    loss_ema_beta: float = 0.9
+
+
+@dataclass
+class Ablation:
+    """Trigger ablation: same selection, same guard, a different poll schedule.
+
+    The contribution is not polling less, it is deciding *when* to poll. Two
+    controls make that testable, a fixed interval and a coin flip, both
+    calibrated to the poll rate the backoff variant measures, so the three
+    variants poll equally often and differ only in the rule that decides.
+    """
+
+    poll_rate: float = 0.05  # the rate the recorded CIFAR-10 ablation used
+
+    @property
+    def poll_probability(self) -> float:
+        """The random trigger's chance of polling any one batch."""
+        return self.poll_rate
+
+    @property
+    def fixed_interval(self) -> int:
+        """The fixed trigger's blind steps between two polls."""
+        return round(1 / self.poll_rate) - 1
+
+
+@dataclass
+class EfficientRelative:
+    """Efficient Relative Polling, per batch and per epoch."""
+
+    multiplier: float = 10.0  # {X/m, X, X*m}: one decade apart, like the fixed grid
+    # The same 1e-1 ceiling every other method is held to; None lets the window roam.
+    lr_max: float | None = 1e-1
+    spike_z: float = 3.0  # per batch: deviations above the loss trend that force a poll
+
+
+@dataclass
+class Hyperparameters:
+    """Every setting of the comparison. The defaults are what the recorded runs used."""
+
+    training: Training = field(default_factory=Training)
+    comparators: Comparators = field(default_factory=Comparators)
+    efficient: EfficientPolling = field(default_factory=EfficientPolling)
+    ablation: Ablation = field(default_factory=Ablation)
+    relative: EfficientRelative = field(default_factory=EfficientRelative)
+
+
+def run_key(method: str, lr: float | None = None) -> str:
+    """Name of a run: the method, plus the starting rate when it is not the default.
+
+    The initial-rate robustness runs are keyed apart this way, so they never
+    mix with the main table.
+    """
+    return method if lr is None else f"{method}_lr{lr:g}"
+
+
+def build_optimizer(
+    method: str,
+    model: nn.Module,
+    spec: DatasetSpec,
+    hyperparameters: Hyperparameters,
+    seed: int,
+) -> tuple[Any, Any]:
+    """Returns ``(optimizer, scheduler)``; the scheduler is ``None`` for most methods.
+
+    The optimizer is a plain ``torch.optim`` one or one of the package's polling
+    optimizers, which wrap it; :func:`~efficient_polling_lr_scheduler.fit` takes both.
+    """
+    lr = hyperparameters.training.lr
+    c = hyperparameters.comparators
+
+    if method == "baseline":
+        return torch.optim.SGD(model.parameters(), lr=lr), None
+    if method == "adam":
+        return torch.optim.Adam(model.parameters(), lr=lr), None
+    if method == "cosine":
+        optimizer = torch.optim.SGD(model.parameters(), lr=c.scheduled_lr)
+        return optimizer, torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=hyperparameters.training.epochs, eta_min=c.cosine_eta_min
+        )
+    if method == "step":
+        optimizer = torch.optim.SGD(model.parameters(), lr=c.scheduled_lr)
+        return optimizer, torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=c.step_size, gamma=c.step_gamma
+        )
+    if method == "plateau":
+        optimizer = torch.optim.SGD(model.parameters(), lr=c.scheduled_lr)
+        return optimizer, torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=c.plateau_factor, patience=c.plateau_patience
+        )
+    if method == "sps":
+        return SPSSGD(model, lr=lr, max_lr=c.sps_max_lr), None
+    if method == "armijo":
+        armijo = ArmijoSGD(
+            model,
+            lr=lr,
+            lr_max=c.armijo_lr_max,
+            alpha=c.armijo_alpha,
+            beta=c.armijo_beta,
+            max_iters=c.armijo_max_iters,
+        )
+        return armijo, None
+    if method == "polling":
+        return PollingSGD(model, lr=lr), None
+    if method == "efficient_relative":
+        r = hyperparameters.relative
+        relative = EfficientRelativePollingSGD(
+            model,
+            lr=lr,
+            multiplier=r.multiplier,
+            lr_max=r.lr_max,
+            spike_z=r.spike_z,
+            rollback_loss=blowup_loss(spec),
+        )
+        return relative, None
+    if method == "efficient_relative_epoch":
+        # Per epoch the controller drives a plain SGD; see build_epoch_polling().
+        return torch.optim.SGD(model.parameters(), lr=lr), None
+    if method in ("efficient", *ABLATIONS):
+        e = hyperparameters.efficient
+        a = hyperparameters.ablation
+        # Everything except the trigger is shared, so the ablation cannot be
+        # explained by a different guard or a different candidate set.
+        kwargs: dict[str, Any] = {
+            "spike_factor": e.spike_factor,
+            "rollback_loss": blowup_loss(spec),
+            "loss_ema_beta": e.loss_ema_beta,
+        }
+        if method == "efficient":
+            kwargs["max_poll_interval"] = e.max_poll_interval
+        elif method == "efficient_fixed":
+            kwargs.update(trigger="fixed", max_poll_interval=a.fixed_interval)
+        else:
+            # Seeded per run, so the coin flips differ across seeds the way
+            # everything else does, and never touch the global RNG, which would
+            # change this run's batch order.
+            kwargs.update(trigger="random", poll_probability=a.poll_probability, poll_seed=seed)
+        return EfficientPollingSGD(model, lr=lr, **kwargs), None
+
+    known = ", ".join(METHODS)
+    raise ValueError(f"unknown method {method!r}; known methods are {known}")
+
+
+def build_epoch_polling(
+    method: str, spec: DatasetSpec, hyperparameters: Hyperparameters
+) -> EfficientRelativeEpochPolling | None:
+    """The epoch-level controller for ``efficient_relative_epoch``, ``None`` for the rest."""
+    if method != "efficient_relative_epoch":
+        return None
+    r = hyperparameters.relative
+    return EfficientRelativeEpochPolling(
+        multiplier=r.multiplier, lr_max=r.lr_max, rollback_loss=blowup_loss(spec)
+    )
