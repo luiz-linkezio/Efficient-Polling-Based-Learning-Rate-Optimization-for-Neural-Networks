@@ -38,7 +38,7 @@ Passos de otimizador dos métodos de polling, como múltiplo dos passos do SGD c
 
 O que os cinco datasets mostram:
 
-1. **O Efficient Relative Polling iguala o Polling base em todos os datasets, por um sexto do custo ou menos.** Fica acima do Polling base em quatro datasets e a menos de um desvio padrão dele no Fashion-MNIST, e é o melhor método no CIFAR-10 e no CIFAR-100.
+1. **O Efficient Relative Polling iguala o Polling base em todos os datasets, por cerca de um quinto do custo.** Fica acima do Polling base em quatro datasets e a menos de um desvio padrão dele no Fashion-MNIST, e é o melhor método no CIFAR-10 e no CIFAR-100.
 2. **Nenhum método é o melhor em todos.** O Adam lidera no MNIST e no Fashion-MNIST, onde os três métodos de polling ficam 0,6 a 1,3 ponto atrás; no MNIST o Polling base termina até abaixo do baseline de taxa fixa. O Efficient Polling é o melhor método no Covertype.
 3. **O Efficient Polling pode travar no menor candidato.** No CIFAR-100 isso aconteceu nas cinco seeds, e duas nunca treinaram. O Polling base e o Efficient Relative Polling nunca travaram, em nenhuma seed de nenhum dataset. [O mecanismo está abaixo](#o-que-os-quatro-datasets-acrescentam).
 4. **Os schedulers que começam em `1e-1` divergem em quatro dos cinco datasets**, e a tabela os credita com o melhor checkpoint antes da divergência.
@@ -83,7 +83,7 @@ Duas variantes de controle isolam a contribuição do backoff adaptativo trocand
 
 Na acurácia final, o **gatilho aleatório é competitivo**: 84,02% de teste contra 83,76% do backoff, dentro da variação entre seeds. É um resultado negativo honesto para a leitura forte da alegação: nesse orçamento, distribuir os polls uniformemente ao acaso já basta para acompanhar o cronograma, desde que a guarda absorva o custo de chegar atrasado na transição. A alegação sustentada é a mais fraca. O backoff alcança a mesma qualidade gastando seus polls onde eles carregam informação (16,4 polls numa época mediana contra um pico de 231 na transição, uma razão de 14×, contra um patamar plano de ~40/época para os dois controles), precisando de **~2,4× menos** intervenções de guarda disparadas por spike (378 contra 919 e 888) e ligeiramente menos passos de otimizador.
 
-O **controle de intervalo fixo expõe uma falha real**: em 4/5 seeds ele iguala as outras variantes (84,17% ± 0,96% de validação), mas na seed restante nunca sai do patamar de inicialização, terminando em ~10% de acurácia (nível de chute aleatório). Na inicialização todo candidato empata, o poll continua retornando a menor LR candidata pela regra de desempate, e em `1e-5` os pesos se movem pouco demais para algum dia quebrar o empate. No CIFAR-10 o backoff adaptativo escapa disso, porque faz poll a cada batch até os candidatos diferirem pela primeira vez. Essa proteção se mostrou mais fraca do que parece aqui: com cem classes uma única resposta certa basta para distinguir os candidatos, e no CIFAR-100 o backoff travou [do mesmo jeito](#o-que-os-quatro-datasets-acrescentam).
+O **controle de intervalo fixo expõe uma falha real**: em 4/5 seeds ele iguala as outras variantes (84,17% ± 0,96% de validação), mas na seed restante nunca sai do patamar de inicialização, terminando em ~10% de acurácia (nível de chute aleatório). Na inicialização todo candidato empata, o poll continua retornando a menor LR candidata pela regra de desempate, e em `1e-5` os pesos se movem pouco demais para algum dia quebrar o empate. No CIFAR-10 o backoff adaptativo escapa disso, porque faz poll a cada dois batches até os candidatos diferirem pela primeira vez. Essa proteção se mostrou mais fraca do que parece aqui: com cem classes uma única resposta certa basta para distinguir os candidatos, e no CIFAR-100 o backoff travou [do mesmo jeito](#o-que-os-quatro-datasets-acrescentam).
 
 ### Efficient Relative Polling
 
@@ -151,7 +151,7 @@ A causa é a regra de sinal do backoff diante de cem classes. A regra só deixa 
 | ↳ ablação: gatilho aleatório | 2 | 1 (1) | 2 | 2 (2) | 0 |
 | Efficient Relative Polling (nosso, por batch) | 0 | 0 | 0 | 0 | 0 |
 
-É daí que vêm os desvios grandes delas na tabela acima. No Fashion-MNIST e no MNIST os controles travam onde o backoff não trava, com a mesma taxa de poll: o backoff faz poll a cada batch até os candidatos diferirem pela primeira vez e zera o intervalo sempre que a escolha muda, enquanto os controles mantêm seu cronograma não importa o que o poll encontre. O Covertype, com sete classes, não travou nada.
+É daí que vêm os desvios grandes delas na tabela acima. No Fashion-MNIST e no MNIST os controles travam nove vezes com a mesma taxa de poll, contra uma do backoff: o backoff faz poll a cada dois batches até os candidatos diferirem pela primeira vez e zera o intervalo sempre que a escolha muda, enquanto os controles mantêm seu cronograma não importa o que o poll encontre. O Covertype, com sete classes, não travou nada.
 
 **Os schedulers divergem em quatro dos cinco datasets.** Runs, de cinco, cuja perda de validação virou `NaN`:
 

@@ -38,7 +38,7 @@ Optimizer steps of the polling methods, as a multiple of plain SGD's. Every othe
 
 What the five datasets show:
 
-1. **Efficient Relative Polling matches base Polling on every dataset, at a sixth of its cost or less.** It is above base Polling on four datasets and within one standard deviation of it on Fashion-MNIST, and it is the best method on CIFAR-10 and CIFAR-100.
+1. **Efficient Relative Polling matches base Polling on every dataset, at about a fifth of its cost.** It is above base Polling on four datasets and within one standard deviation of it on Fashion-MNIST, and it is the best method on CIFAR-10 and CIFAR-100.
 2. **No method is best everywhere.** Adam leads on MNIST and Fashion-MNIST, where the three polling methods trail it by 0.6 to 1.3 points; on MNIST base Polling even ends below the fixed-rate baseline. Efficient Polling is the best method on Covertype.
 3. **Efficient Polling can stall at its smallest candidate.** On CIFAR-100 it did on all five seeds, and two never trained. Base Polling and Efficient Relative Polling never stalled, on any seed of any dataset. [The mechanism is below](#what-the-four-datasets-add).
 4. **The schedulers that start at `1e-1` diverge on four of the five datasets**, and the table credits them with their best checkpoint before the divergence.
@@ -83,7 +83,7 @@ Two control variants isolate the contribution of the adaptive backoff by replaci
 
 On final accuracy the **random trigger is competitive**: 84.02% test vs. 83.76% for the backoff, well inside the seed-to-seed spread. This is an honest negative result for the strong reading of the claim: at this budget, distributing polls uniformly at random is enough to track the schedule, provided the guard absorbs the cost of arriving late. The supported claim is the weaker one. The backoff reaches the same quality while spending its polls where they carry information (16.4 polls in a median epoch vs. a peak of 231 at the transition, a 14× ratio, against a flat ~40/epoch for both controls), needing **~2.4× fewer** spike-triggered guard interventions (378 vs. 919 and 888) and slightly fewer optimizer steps.
 
-The **fixed-interval control exposes a real failure mode**: on 4/5 seeds it matches the other variants (84.17% ± 0.96% val), but on the remaining seed it never leaves the initialization plateau, ending at ~10% (random-guess) accuracy. At initialization every candidate ties, the poll keeps returning the smallest candidate LR by the tie-break rule, and at `1e-5` the weights move too little to ever break the tie. On CIFAR-10 the adaptive backoff avoids it, because it polls every batch until the candidates first differ. That protection turned out weaker than it looks here: with a hundred classes a single correct answer is enough to tell the candidates apart, and on CIFAR-100 the backoff stalled [the same way](#what-the-four-datasets-add).
+The **fixed-interval control exposes a real failure mode**: on 4/5 seeds it matches the other variants (84.17% ± 0.96% val), but on the remaining seed it never leaves the initialization plateau, ending at ~10% (random-guess) accuracy. At initialization every candidate ties, the poll keeps returning the smallest candidate LR by the tie-break rule, and at `1e-5` the weights move too little to ever break the tie. On CIFAR-10 the adaptive backoff avoids it, because it polls every other batch until the candidates first differ. That protection turned out weaker than it looks here: with a hundred classes a single correct answer is enough to tell the candidates apart, and on CIFAR-100 the backoff stalled [the same way](#what-the-four-datasets-add).
 
 ### Efficient Relative Polling
 
@@ -151,7 +151,7 @@ The cause is the backoff's signal rule meeting a hundred classes. The rule lets 
 | ↳ ablation: random trigger | 2 | 1 (1) | 2 | 2 (2) | 0 |
 | Efficient Relative Polling (ours, per batch) | 0 | 0 | 0 | 0 | 0 |
 
-That is what their large deviations in the table above come from. On Fashion-MNIST and MNIST the controls stall where the backoff does not, at the same poll rate: the backoff polls every batch until the candidates first differ and resets its interval whenever the choice changes, while the controls keep their schedule whatever the poll finds. Covertype, with seven classes, stalled nothing.
+That is what their large deviations in the table above come from. On Fashion-MNIST and MNIST the controls stall nine times at the same poll rate, where the backoff stalls once: the backoff polls every other batch until the candidates first differ and resets its interval whenever the choice changes, while the controls keep their schedule whatever the poll finds. Covertype, with seven classes, stalled nothing.
 
 **The schedulers diverge on four of the five datasets.** Runs, out of five, whose validation loss became `NaN`:
 
