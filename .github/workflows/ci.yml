@@ -13,7 +13,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/ruff-action@v3
       - run: ruff check .
-      - run: ruff format --check src tests examples
+      - run: ruff format --check src tests benchmark
+      # Notebooks are committed without outputs; `nbstripout --install` does it on commit.
+      - name: Notebooks carry no outputs
+        run: pipx run --spec "nbstripout>=0.8" nbstripout --verify notebooks/*.ipynb
 
   test:
     runs-on: ubuntu-latest

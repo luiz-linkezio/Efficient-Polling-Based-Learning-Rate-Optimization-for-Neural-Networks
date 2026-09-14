@@ -4,6 +4,92 @@ All notable changes to the `efficient-polling-lr-scheduler` package are document
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+The package itself is unchanged. Everything below is the benchmark around it:
+four more datasets, the runs on them, and a reorganized repository.
+
+### Added
+
+- CIFAR-100, MNIST, Fashion-MNIST and Covertype next to CIFAR-10, read straight
+  from the files their authors publish, with no torchvision and no download
+  inside a run. The IDX files are accepted compressed or not, dashed or dotted,
+  and a directory that shares a file's name no longer shadows it. Covertype is
+  tabular: 581,012 rows of 54 cartographic features and seven cover types, on
+  the published split (the first 15,120 rows to fit on, the remaining 565,892
+  to test on), trained with `SimpleMLP` (512→256→128, no batch norm and no
+  dropout, the same rule the CNN follows).
+- The comparison on those four datasets: thirteen configurations over five
+  seeds, 260 runs in `results/<dataset>/`, their figures in `images/<dataset>/`
+  and the tables in `docs/results.md`. Nothing was retuned per dataset.
+- `docs/methods.md`, `docs/results.md` and `docs/reproducing.md`, in English and
+  in Portuguese under `docs/pt-br/`, split out of READMEs that had grown to 400
+  lines each. The READMEs keep the install, the quickstart, the API and a
+  five-dataset summary.
+- Tests for the dataset readers, the benchmark and its figures, against files
+  the tests write themselves: the suite goes from 151 to 237 and still
+  downloads nothing.
+
+### Changed
+
+- The experiment code is one package, `benchmark/`, imported by both
+  `notebooks/benchmark.ipynb` and `python -m benchmark`: `datasets.py`,
+  `models.py`, `methods.py`, `sweep.py` and `plots.py`. It replaces
+  `examples/cifar10.py`, `examples/plot_results.py` and the notebook's own
+  copies of the network, the optimizer builder, the sweep and the figures,
+  which had drifted apart. Checked against the previous notebook code: runs on
+  synthetic data identical field by field, identical optimizer settings for
+  every method, and byte-identical CIFAR-10 figures.
+- `notebooks/cifar10.ipynb` becomes `notebooks/benchmark.ipynb`, and a `DATASET`
+  constant picks the dataset. It is committed without outputs (it weighed 49 MB,
+  45 MB of them two embedded animations), and CI checks that with nbstripout.
+- The model's input and class count, the divergence threshold, the results
+  directory and the checkpoint names all follow from the dataset, so a second
+  dataset cannot overwrite the first one's runs. The divergence threshold is
+  `2 * ln(num_classes)` rather than a literal `2 * ln(10)`: on CIFAR-100 the old
+  value sat *below* the loss a hundred-class run starts at, which would have
+  rolled back every batch. CIFAR-10 keeps the number the recorded runs used.
+- `SimpleCIFAR10CNN` becomes `SimpleCNN`, taking its channel and class counts
+  from the dataset; on CIFAR-10 it is the same 557,898-parameter network.
+- Normalization statistics are taken along the first axis of a sample, which is
+  per channel for an image and per feature for a table. A 0/1 flag keeps its
+  own scale (mean 0, std 1) and a feature constant over the split gets std 1
+  rather than a floor of 1e-8: two of Covertype's soil types never occur in the
+  15,120 training rows, and the floor sent every test row that has one set to
+  1e8, with a test loss in the hundreds to show for it.
+- Figures go to `images/<dataset>/` under the names the paper cites, so the
+  CIFAR-10 figures moved from `images/` to `images/cifar10/`. The poll-count
+  floor in `polls_per_epoch.png` follows the dataset's batches per epoch
+  instead of CIFAR-10's 704.
+- The trigger ablations can be calibrated to the poll rate Efficient Polling
+  measured on the first seed (`--calibrate-ablations`, or
+  `Experiment(calibrate_ablations=True)`), which is how the four new datasets
+  were run; CIFAR-10 keeps the paper's 5%.
+- `--lr` on the command line records runs as `<method>_lr<rate>`, as the
+  notebook's initial-rate runs are, instead of mixing them with the table.
+- The `examples` extra becomes `benchmark`, and `dev` also installs matplotlib
+  and nbstripout.
+- The READMEs no longer link to the paper's LaTeX source or to a local copy of
+  the base paper, neither of which is in the repository; they cite Tan et al.
+  by DOI instead.
+
+### Removed
+
+- `images/learning_rate_factor_formula.png`, `images/training_comparison_LRs.png`
+  and `images/training_comparison_losses.png`, which nothing referenced.
+
+### Fixed
+
+- The READMEs said Efficient Polling's backoff is immune to stalling at its
+  smallest candidate. It is not: the rule that holds the backoff back records
+  signal on the first poll whose candidates differ, which a single correct
+  answer at chance is enough for, and CIFAR-100 stalled all five seeds that way.
+  The docs now describe the failure and its mechanism.
+
+### Note
+
+No published CIFAR-10 number changed.
+
 ## [2.0.0] - 2026-09-07
 
 ### Changed
