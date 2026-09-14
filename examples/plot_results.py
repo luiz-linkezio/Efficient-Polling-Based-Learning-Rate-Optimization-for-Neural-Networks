@@ -1,10 +1,14 @@
-"""Redraw the paper's figures from the runs recorded by ``cifar10.py``.
+"""Redraw the paper's figures from the runs recorded by ``benchmark.py``.
 
-Reads every ``results/cifar10/<method>_seed<N>.json`` and plots the mean curve
+Reads every ``results/<dataset>/<method>_seed<N>.json`` and plots the mean curve
 across seeds with a shaded min-max band, so a figure can never disagree with
 the table: both are computed from the same files.
 
-    python examples/plot_results.py --results-dir results/cifar10 --out-dir images
+    python examples/plot_results.py --out-dir images
+    python examples/plot_results.py --dataset mnist --out-dir images
+
+CIFAR-10 writes the file names the paper cites; every other dataset appends its
+own name, so a second sweep never overwrites the paper's figures.
 
 Requires the ``examples`` extra: ``pip install "efficient-polling-lr-scheduler[examples]"``.
 """
@@ -17,8 +21,9 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from benchmark_datasets import DATASETS, spec_for
 
-# Method order and labels follow the table in cifar10.py.
+# Method order and labels follow the table in benchmark.py.
 LABELS = {
     "baseline": "SGD (fixed 1e-3)",
     "polling": "Polling (base paper)",
@@ -51,9 +56,9 @@ def curves(runs: list[dict], key: str) -> tuple[np.ndarray, np.ndarray, np.ndarr
     return stacked.mean(axis=0), stacked.min(axis=0), stacked.max(axis=0)
 
 
-def plot_losses(runs_by_method: dict[str, list[dict]], out_path: Path) -> None:
+def plot_losses(runs_by_method: dict[str, list[dict]], out_path: Path, dataset: str) -> None:
     fig, ax = plt.subplots(figsize=(10, 5), constrained_layout=True)
-    ax.set_title("Loss per epoch (mean over seeds, band = min-max)")
+    ax.set_title(f"{dataset}: loss per epoch (mean over seeds, band = min-max)")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
     ax.grid(True, alpha=0.3)
@@ -91,9 +96,11 @@ def plot_losses(runs_by_method: dict[str, list[dict]], out_path: Path) -> None:
     print(f"saved {out_path}")
 
 
-def plot_learning_rates(runs_by_method: dict[str, list[dict]], out_path: Path) -> None:
+def plot_learning_rates(
+    runs_by_method: dict[str, list[dict]], out_path: Path, dataset: str
+) -> None:
     fig, ax = plt.subplots(figsize=(10, 5), constrained_layout=True)
-    ax.set_title("Mean learning rate per epoch (mean over seeds, band = min-max)")
+    ax.set_title(f"{dataset}: mean learning rate per epoch (mean over seeds, band = min-max)")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Learning rate")
     ax.set_yscale("symlog", linthresh=1e-4)
@@ -113,14 +120,14 @@ def plot_learning_rates(runs_by_method: dict[str, list[dict]], out_path: Path) -
     print(f"saved {out_path}")
 
 
-def plot_polls(runs_by_method: dict[str, list[dict]], out_path: Path) -> None:
+def plot_polls(runs_by_method: dict[str, list[dict]], out_path: Path, dataset: str) -> None:
     runs = runs_by_method.get("efficient")
     if not runs:
         print("no efficient-polling runs found, skipping the poll figure")
         return
 
     fig, ax = plt.subplots(figsize=(10, 4), constrained_layout=True)
-    ax.set_title("Efficient Polling: polls per epoch (mean over seeds, band = min-max)")
+    ax.set_title(f"{dataset}, Efficient Polling: polls per epoch (mean over seeds, band = min-max)")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Polls")
     ax.grid(True, alpha=0.3)
@@ -137,21 +144,29 @@ def plot_polls(runs_by_method: dict[str, list[dict]], out_path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--results-dir", default="results/cifar10")
+    parser.add_argument("--dataset", default="cifar10", choices=list(DATASETS))
+    parser.add_argument("--results-dir", default=None, help="default: results/<dataset>")
     parser.add_argument("--out-dir", default="images")
     args = parser.parse_args()
 
-    runs_by_method = load(Path(args.results_dir))
+    spec = spec_for(args.dataset)
+    results_dir = Path(args.results_dir or Path("results") / spec.key)
+
+    runs_by_method = load(results_dir)
     if not runs_by_method:
-        raise SystemExit(f"no result files in {args.results_dir}; run examples/cifar10.py first")
+        raise SystemExit(
+            f"no result files in {results_dir}; run examples/benchmark.py "
+            f"--dataset {spec.key} first"
+        )
     for method, runs in runs_by_method.items():
         print(f"{method}: {len(runs)} seed(s)")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    plot_losses(runs_by_method, out_dir / "training_comparison_losses.png")
-    plot_learning_rates(runs_by_method, out_dir / "training_comparison_LRs.png")
-    plot_polls(runs_by_method, out_dir / "polls_per_epoch.png")
+    tag = spec.figure_suffix
+    plot_losses(runs_by_method, out_dir / f"training_comparison_losses{tag}.png", spec.name)
+    plot_learning_rates(runs_by_method, out_dir / f"training_comparison_LRs{tag}.png", spec.name)
+    plot_polls(runs_by_method, out_dir / f"polls_per_epoch{tag}.png", spec.name)
 
 
 if __name__ == "__main__":

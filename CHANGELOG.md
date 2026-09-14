@@ -4,6 +4,62 @@ All notable changes to the `efficient-polling-lr-scheduler` package are document
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `examples/benchmark_datasets.py` — CIFAR-10, CIFAR-100, MNIST,
+  Fashion-MNIST and Covertype, read straight from the files their authors
+  publish. No torchvision and no download inside a run: the IDX files are
+  accepted compressed or not, dashed or dotted, and a directory that shares a
+  file's name no longer shadows it. Adding a dataset is one entry in `DATASETS`.
+- Covertype is the one that is not images: 581,012 rows of 54 cartographic
+  features and seven cover types, on the published split (the first 15,120 rows
+  to fit on, the remaining 565,892 to test on). With no spatial axes to
+  convolve over it trains `SimpleMLP` — 512→256→128, no batch norm and no
+  dropout, the same rule the CNN follows — so the comparison stops being about
+  convolutions. A dataset now declares an `input_shape` rather than a channel
+  count and a side length, and the model follows from it.
+- `--dataset` on the sweep script and on `examples/plot_results.py`, and a
+  `DATASET` constant in the notebook. The model's input channels and class
+  count, the divergence threshold, the results directory and the checkpoint
+  names all follow from it, so a second dataset cannot overwrite the first
+  one's runs. Results default to `results/<dataset>/`.
+- Tests for the loaders and for what the sweep builds per dataset: 49 of them
+  (the suite goes from 151 to 200),
+  against files the tests write themselves, so the suite still downloads
+  nothing. `numpy` joins the `dev` extra, which is what they parse with.
+
+### Changed
+
+- The divergence threshold is now `2 * ln(num_classes)` rather than a literal
+  `2 * ln(10)`. On CIFAR-100 the old value sat *below* the loss a hundred-class
+  run starts at, which would have rolled back every batch without erroring
+  once. CIFAR-10 keeps the number the recorded runs used.
+- `examples/cifar10.py` becomes `examples/benchmark.py` and
+  `notebooks/cifar10.ipynb` becomes `notebooks/benchmark.ipynb`: neither is
+  about one dataset any more. `SimpleCIFAR10CNN` becomes `SimpleCNN`, taking
+  its channel and class counts from the dataset; on CIFAR-10 it is the same
+  557,898-parameter network, unchanged.
+- The notebook now imports its loaders from `examples/benchmark_datasets.py`
+  instead of carrying its own copy, so the notebook and the command line cannot
+  disagree about what they are training on.
+- Normalization statistics are taken along the first axis of a sample instead of
+  a hard-coded channel axis, which is per channel for an image and per feature
+  for a table, from the same code. A 0/1 flag keeps its own scale (mean 0,
+  std 1) and a feature constant over the split gets std 1 rather than a floor
+  of 1e-8: two of Covertype's soil types never occur in the 15,120 training
+  rows, and the floor sent every test row that has one set to 1e8, with a
+  test loss in the hundreds to show for it. An image channel meets neither case.
+- CIFAR-10 figures keep the file names the paper cites; every other dataset
+  appends its own (`polls_per_epoch_mnist.png`), so a later sweep cannot
+  overwrite the paper's figures.
+
+### Note
+
+No published result changed. Every number in the README and in the paper is
+CIFAR-10, and the other four datasets are wired end to end but not yet run.
+
 ## [2.0.0] - 2026-09-07
 
 ### Changed

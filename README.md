@@ -268,14 +268,15 @@ The **fixed-interval control exposes a real failure mode**: on 4/5 seeds it matc
 │   └── training.py            # optional fit/train_epoch/evaluate helpers
 ├── tests/                     # pytest suite for the algorithms
 ├── examples/
-│   ├── cifar10.py             # reproduces all thirteen configurations from the CLI
+│   ├── benchmark.py           # reproduces all thirteen configurations from the CLI, on any dataset
+│   ├── benchmark_datasets.py  # the five dataset readers, no torchvision
 │   └── plot_results.py        # redraws the figures from the recorded runs
 ├── notebooks/
-│   └── cifar10.ipynb          # original experiments: data, model, all 13 methods, plots
+│   └── benchmark.ipynb        # original experiments: data, model, all 13 methods, plots
 ├── docs/
 │   └── main.tex                # the paper (IEEE format)
 ├── images/                    # figures used in the paper and this README
-├── results/cifar10/           # the 69 recorded runs: 13 configurations × 5 seeds, plus 4 initial-rate runs
+├── results/<dataset>/         # one directory per dataset; results/cifar10/ holds the 69 recorded runs: 13 configurations × 5 seeds, plus 4 initial-rate runs
 ├── models/                    # best checkpoints per method (.pt, gitignored)
 ├── pyproject.toml
 ├── CHANGELOG.md
@@ -301,40 +302,56 @@ source venv/bin/activate
 pip install -e ".[dev,examples]" jupyter
 ```
 
-### Dataset
+### Datasets
 
-The experiments load the **CIFAR-10 Python** version from a local directory (the pickled `data_batch_*` / `test_batch` files). Download it from the [official site](https://www.cs.toronto.edu/~kriz/cifar.html):
+Every dataset is read straight from the files its authors publish — no torchvision, no download step hidden inside a run. `--dataset` selects one. Four are images; **Covertype is not** — 581,012 rows of 54 cartographic features and seven forest cover types, which swaps the CNN for an MLP and takes the comparison out of vision altogether:
+
+| `--dataset` | Images | Classes | `--data-dir` should hold | Source |
+|---|---|---|---|---|
+| `cifar10` (default) | 32×32 colour | 10 | `data_batch_1`…`data_batch_5`, `test_batch` | [cs.toronto.edu](https://www.cs.toronto.edu/~kriz/cifar.html) |
+| `cifar100` | 32×32 colour | 100 | `train`, `test` (fine labels) | [cs.toronto.edu](https://www.cs.toronto.edu/~kriz/cifar.html) |
+| `mnist` | 28×28 grey | 10 | the four IDX files | [ossci mirror](https://ossci-datasets.s3.amazonaws.com/mnist/) |
+| `fashion_mnist` | 28×28 grey | 10 | the four IDX files | [zalandoresearch](https://github.com/zalandoresearch/fashion-mnist) |
+| `covertype` | 54 features | 7 | `covtype.data` (or `.gz`) | [UCI](https://archive.ics.uci.edu/dataset/31/covertype) |
 
 ```bash
 curl -O https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz
 tar -xzf cifar-10-python.tar.gz
 ```
 
+The IDX files are read compressed or not, dashed (`train-images-idx3-ubyte`) or dotted (`train-images.idx3-ubyte`), so there is nothing to unpack or rename. Covertype follows the published protocol: the first 15,120 rows are what the sweep fits on (its own 90/10 train/val split runs inside them), the remaining 565,892 are the test set. Images are normalized per channel and Covertype per feature, always with statistics of the training split; Covertype's 44 wilderness-area and soil-type columns are 0/1 flags and stay on that scale — z-scoring a flag set in a handful of rows turns it into a value in the hundreds, and two soil types never occur in the 15,120 training rows at all, which with a plain z-score would send a test row that has one set off to 1e8.
+
+**The reported results are CIFAR-10.** The other four are wired end to end — loaders, network, divergence threshold, results and checkpoint paths — and have not been run yet; they are there so the comparison can stop resting on one dataset, and on one architecture.
+
 ## Running
 
 The example script runs every configuration over one or more seeds and prints the comparison table, resuming a sweep from any results already on disk:
 
 ```bash
-python examples/cifar10.py --data-dir /path/to/cifar-10-batches-py --seeds 42 43 44 45 46
+python examples/benchmark.py --data-dir /path/to/cifar-10-batches-py --seeds 42 43 44 45 46
 # one method, one seed, shorter run:
-python examples/cifar10.py --data-dir ... --methods efficient --seeds 42 --epochs 20
+python examples/benchmark.py --data-dir ... --methods efficient --seeds 42 --epochs 20
+# another dataset: the network, the class count and the divergence threshold follow
+python examples/benchmark.py --dataset fashion_mnist --data-dir /path/to/fashion --seeds 42
+python examples/benchmark.py --dataset covertype --data-dir /path/to/covertype --seeds 42
 ```
 
-Results are written to `--results-dir` (default `results/cifar10/`) as one JSON file per `(method, seed)`. `examples/plot_results.py` redraws the figures from those files, so a plot can never disagree with the table:
+Results are written to `--results-dir` (default `results/<dataset>/`) as one JSON file per `(method, seed)`. `examples/plot_results.py` redraws the figures from those files, so a plot can never disagree with the table:
 
 ```bash
-python examples/plot_results.py --results-dir results/cifar10 --out-dir images
+python examples/plot_results.py --out-dir images                  # CIFAR-10, the names the paper cites
+python examples/plot_results.py --dataset mnist --out-dir images  # writes *_mnist.png instead
 ```
 
 Run the test suite with `pytest`.
 
-Alternatively, open the original notebook and run the cells top to bottom, pointing `DATA_DIR` (in the **Constants** cell) at the extracted `cifar-10-batches-py` directory:
+Alternatively, open the notebook and run the cells top to bottom, setting `DATASET` and the matching entry of `DATA_DIRS` (both in the **Constants** cell):
 
 ```bash
-jupyter notebook notebooks/cifar10.ipynb
+jupyter notebook notebooks/benchmark.ipynb
 ```
 
-The notebook is organized as: Imports → Constants → Configs (seeds `42`–`46`, device) → Data (dataset, normalization stats, 90/10 train/val split) → Model (`SimpleCIFAR10CNN`, ~0.56M params) → Train (all thirteen configurations, one shared loop) → Animations & plots → Test. Best checkpoints are written to `models/`.
+The notebook is organized as: Imports → Constants (including `DATASET`) → Configs (seeds `42`–`46`, device) → Data (loaders shared with `examples/benchmark_datasets.py`, normalization stats, 90/10 train/val split) → Model (`SimpleCNN` or `SimpleMLP`, whichever the dataset's shape calls for; ~0.56M params on CIFAR-10) → Train (all thirteen configurations, one shared loop) → Animations & plots → Test. Best checkpoints are written to `models/` and results to `results/<dataset>/`, so two datasets never overwrite each other.
 
 > **Reproducibility.** Five seeds (42–46) each fix weight init, data shuffling and the train/val split, so on a given seed every method starts from the same weights and sees the same batch order. All numbers above are the mean ± sample standard deviation over the five runs.
 
@@ -342,8 +359,8 @@ The notebook is organized as: Imports → Constants → Configs (seeds `42`–`4
 
 ## Experimental setup
 
-- **Dataset:** CIFAR-10 — 45,000 train / 5,000 val / 10,000 test, normalized per channel with training statistics.
-- **Model:** `SimpleCIFAR10CNN`, a 5-layer CNN (64→64→128→128→256 conv channels, `3×3` kernels, ReLU, MaxPool, AdaptiveAvgPool, Linear head), **557,898 parameters**, no batch norm or dropout so the optimizer is the only source of adaptation.
+- **Dataset:** CIFAR-10 — 45,000 train / 5,000 val / 10,000 test, normalized per channel with training statistics. CIFAR-100, MNIST, Fashion-MNIST and Covertype run through the same pipeline via `--dataset`, but every number reported here is CIFAR-10.
+- **Model:** `SimpleCNN`, a 5-layer CNN (64→64→128→128→256 conv channels, `3×3` kernels, ReLU, MaxPool, AdaptiveAvgPool, Linear head), **557,898 parameters** on CIFAR-10, no batch norm or dropout so the optimizer is the only source of adaptation. Only the first convolution and the classifier change with the dataset; the global pool means the input side length never enters. A dataset with no spatial axes gets `SimpleMLP` instead (512→256→128, same no-batch-norm rule).
 - **Optimizer:** vanilla SGD (no momentum, no weight decay) for the proposed and replicated methods, batch size 64, base LR `1e-3`, 150 epochs (704 batches/epoch, 105,600 total).
 - **Comparison methods:** Adam, cosine annealing, step decay, ReduceLROnPlateau, SPS (Polyak step-size), Armijo backtracking line search, and the replicated base Polling method — eight in total, plus two trigger-ablation variants of the proposed method.
 - **Seeds:** five (42–46) per configuration, thirteen configurations, 65 runs total, plus four initial-rate robustness runs on seed 42.
