@@ -572,11 +572,16 @@ def _save(fig: Figure, path: Path) -> Path:
     return path
 
 
-def save_figures(results_dir: Path | str, out_dir: Path | str) -> list[Path]:
+def save_figures(
+    results_dir: Path | str,
+    out_dir: Path | str,
+    max_poll_interval: int = EfficientPolling.max_poll_interval,
+) -> list[Path]:
     """Draw every figure the records of one dataset allow, and return the files written.
 
-    The poll figure needs Efficient Polling runs, and the robustness figure needs
-    runs started away from the default rate, which only CIFAR-10 has.
+    The poll figure needs Efficient Polling runs, and draws its floor from the
+    ``max_poll_interval`` the runs used. The robustness figure needs runs
+    started away from the default rate, which only CIFAR-10 has.
     """
     runs = load_runs(results_dir)
     if not runs:
@@ -588,7 +593,9 @@ def save_figures(results_dir: Path | str, out_dir: Path | str) -> list[Path]:
         ("training_comparison_losses_all", lambda: loss_comparison(runs)),
     ]
     if any(runs.get(m) for m in ("efficient", "efficient_fixed", "efficient_random")):
-        drawings.append(("polls_per_epoch", lambda: polls_per_epoch(runs)))
+        drawings.append(
+            ("polls_per_epoch", lambda: polls_per_epoch(runs, max_poll_interval=max_poll_interval))
+        )
     starts = load_initial_lr_runs(results_dir)
     if len({lr0 for _, lr0 in starts}) > 1:
         drawings.append(("initial_lr_robustness", lambda: lr_robustness(starts)))

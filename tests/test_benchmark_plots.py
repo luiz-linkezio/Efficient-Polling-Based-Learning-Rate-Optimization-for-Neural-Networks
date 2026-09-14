@@ -95,6 +95,14 @@ def test_the_poll_floor_follows_the_datasets_batches_per_epoch(results: Path) ->
     assert floor == "floor $\\approx$ 3"
 
 
+def test_the_poll_floor_follows_the_backoff_cap_the_runs_used(results: Path) -> None:
+    figure = plots.polls_per_epoch(load_runs(results), max_poll_interval=20)
+
+    (floor,) = [t.get_text() for t in figure.axes[0].texts]
+
+    assert floor == "floor $\\approx$ 10"
+
+
 def test_a_diverged_seed_is_counted_in_the_legend(tmp_path: Path) -> None:
     directory = tmp_path / "results"
     write(directory, record("cosine", 42))
