@@ -29,6 +29,22 @@ four more datasets, the runs on them, and a reorganized repository.
 - Tests for the dataset readers, the benchmark and its figures, against files
   the tests write themselves: the suite goes from 151 to 237 and still
   downloads nothing.
+- Learning-rate rounds, in `benchmark/rounds.py`, on the command line
+  (`--round OPTIMIZER:RATE`) and in cells of their own in the notebook: every
+  method except Adam, SPS and Armijo on one base optimizer, SGD or Adam, from
+  one rate, `1`, `1e-3` or `1e-7`, recorded in `results/<dataset>/rounds/`.
+  The schedules start from the round's rate, Polling and Efficient Polling
+  centre their grid on it and Efficient Relative Polling starts from it, its
+  `1e-1` ceiling raised to `1` in the rounds that start there.
+  SPS and Armijo never read a starting rate, so they get a test of their own
+  that moves their ceiling instead, on SGD only (`--ceiling RATE`,
+  `results/<dataset>/ceilings/`). Nothing has been run in either yet.
+- `python -m benchmark.pool`, which makes a sweep's runs side by side, one
+  process per method and seed, four per GPU by default, and
+  `slurm/benchmark.sbatch`, which runs one round or one ceiling of one dataset
+  per cluster job and resumes from the runs left when the job is preempted or
+  submitted again. Records are now written aside and moved into place, so a
+  run killed while writing one leaves nothing half-written to be read back.
 
 ### Changed
 
@@ -67,6 +83,13 @@ four more datasets, the runs on them, and a reorganized repository.
   were run; CIFAR-10 keeps the paper's 5%.
 - `--lr` on the command line records runs as `<method>_lr<rate>`, as the
   notebook's initial-rate runs are, instead of mixing them with the table.
+- The benchmark builds Polling, Efficient Polling and Efficient Relative Polling
+  from the package's wrappers around `Training.optimizer` instead of its SGD
+  classes, so a round can put them on Adam. On SGD the old and the new builders
+  take bit-identical steps for every method, and the tables and figures drawn
+  from the recorded runs come out identical. A new record keeps the base
+  optimizer it stepped with, and tables and legends name the fixed rate and the
+  schedules after the optimizer and rate the record holds.
 - The `examples` extra becomes `benchmark`, and `dev` also installs matplotlib
   and nbstripout.
 - The READMEs no longer link to the paper's LaTeX source or to a local copy of

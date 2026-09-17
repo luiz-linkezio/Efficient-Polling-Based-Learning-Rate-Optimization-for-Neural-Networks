@@ -5,6 +5,8 @@
 - [Setup](#setup)
 - [Datasets](#datasets)
 - [Running](#running): from the command line or from the notebook
+- [Learning-rate rounds](#learning-rate-rounds): every method on SGD or on Adam, from one rate
+- [Running on a SLURM cluster](#running-on-a-slurm-cluster): several runs per GPU, one round per job
 - [Experimental setup](#experimental-setup)
 - [Repository layout](#repository-layout)
 
@@ -64,6 +66,10 @@ python -m benchmark --data-dir ... --methods efficient --seeds 42 --epochs 20
 python -m benchmark --dataset mnist --data-dir /path/to/MNIST --seeds 42 43 44 45 46 --calibrate-ablations
 # the initial-rate robustness runs, recorded as <method>_lr<rate>:
 python -m benchmark --data-dir ... --methods efficient efficient_relative --seeds 42 --lr 1e-5
+# a learning-rate round, recorded in results/<dataset>/rounds/adam_lr1/:
+python -m benchmark --data-dir ... --seeds 42 43 44 45 46 --round adam:1
+# SPS and Armijo under a 1e-7 ceiling, recorded in results/<dataset>/ceilings/sgd_lr1e-07/:
+python -m benchmark --data-dir ... --seeds 42 43 44 45 46 --ceiling 1e-7
 ```
 
 The sweep goes seed by seed and prints the table at the end. Every hyperparameter has a flag, and `python -m benchmark --help` lists them with the values the recorded runs used. `--calibrate-ablations` sets both trigger ablations to the poll rate `efficient` measured on the first seed, so that run has to exist first; in the default method order it does.
@@ -84,6 +90,61 @@ jupyter notebook notebooks/benchmark.ipynb
 Set `DATASET` and its entry in `DATA_DIRS` in the first code cells, then run the cells top to bottom: Setup, Hyperparameters, Data, Model, Training runs (one cell per family of methods), Figures and animations, Test. The notebook builds an `Experiment` from the `benchmark` package and calls it, so what it runs is exactly what the command line runs.
 
 > **Reproducibility.** Five seeds (42–46) each fix weight init, data shuffling and the train/val split, so on a given seed every method starts from the same weights and sees the same batch order.
+
+## Learning-rate rounds
+
+The main table fixes the base optimizer at SGD and the starting rate at `1e-3`, and varies the method. A round fixes both at other values: every method steps with one base optimizer and is given one learning rate, so a round shows how each method copes with a rate chosen too high or too low, without mixing the optimizer into the comparison. There are six, SGD and Adam each from `1`, `1e-3` and `1e-7`, defined in `benchmark/rounds.py`. Each method takes the round's rate wherever it asks for one:
+
+| Method | What the round's rate is |
+|---|---|
+| Fixed rate | the rate of the whole run, on the round's optimizer |
+| Cosine annealing, step decay, ReduceLROnPlateau | where the schedule starts, instead of the main table's `1e-1` |
+| Polling, Efficient Polling | the centre of the candidate grid, two decades either side, so from `1` the grid reaches `1e+2`, as in the initial-rate runs |
+| Trigger ablations | as for Efficient Polling, with the poll rate calibrated to the round's own Efficient Polling run |
+| Efficient Relative Polling, per batch and per epoch | where it starts, under the main table's `1e-1` ceiling, which the rounds from `1` raise to `1` because the method refuses to start above its ceiling |
+
+Adam, SPS and Armijo sit the rounds out. Adam is the base optimizer of half of them. SPS and Armijo never read a starting rate: the Polyak step overwrites it on the first batch, and the line search starts every batch from its ceiling. Their own test moves that ceiling through the same three rates instead, on SGD only, because both formulas assume the step follows the gradient, which Adam's does not.
+
+A round records into `results/<dataset>/rounds/<optimizer>_lr<rate>/` and the ceiling test into `results/<dataset>/ceilings/sgd_lr<rate>/`, with the checkpoints in the same folders under `models/`, so neither mixes with the main table and two rounds can run at once. In the notebook, the cells after the initial-rate runs sweep one round (`ROUND`) and one ceiling (`CEILING`) per run, the Figures section draws each round's figures into `images/<dataset>/rounds/<optimizer>_lr<rate>/`, and the Test section prints two summaries: the test accuracy of every method in every round, and of SPS and Armijo under every ceiling.
+
+**Cost.** Going by the recorded runs, a round costs what the main table costs without Adam, SPS and Armijo: about 8 h of CIFAR-10 for five seeds, and some 57 h of run time over the five datasets, four of which shared the GPU three at a time. A round can take longer, since Adam's step is slower than SGD's and a method that stalls at its smallest candidate polls every other batch. SPS and Armijo add about 1.5 h of CIFAR-10 per ceiling, 15 h over the five datasets.
+
+## Running on a SLURM cluster
+
+`python -m benchmark.pool` takes the flags of `python -m benchmark` and makes the runs side by side, one process per `(method, seed)`, four per GPU unless `--workers` says otherwise. Each process is `python -m benchmark` for that method and seed, so the records are the ones a sequential sweep would write, except for `s_per_epoch`: runs that share a GPU slow each other down. Runs with a record are skipped, calibrated ablations wait for Efficient Polling's run on the first seed, and each run logs to `logs/`, in a folder that mirrors the one its record goes to under `results/`.
+
+`slurm/benchmark.sbatch` runs one round, or one ceiling, of one dataset per job. On the login node, clone the repository and create the environment the job activates:
+
+```bash
+git clone --branch dev https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks.git
+cd Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks
+python3 -m venv .venv && .venv/bin/pip install -e ".[benchmark]"
+mkdir -p logs
+```
+
+Any Python 3.10 or newer works, as long as the compute nodes see the interpreter it was created from. `uv` builds the same environment faster, but it locks its cache and the environment it installs into, and a file lock hangs for good on a home directory mounted over NFS with a broken lock daemon, which is what Apuana's did in September 2026. `pip` takes no such lock.
+
+The job reads the datasets from `~/Datasets/`, in the folders the notebook's `DATA_DIRS` names (`DATA_ROOT` or `DATA_DIR` point it elsewhere). From a machine that has them:
+
+```bash
+rsync -av ~/Datasets/{cifar-10-python,cifar-100-python,MNIST,fashion-mnist,covertype} <user>@<login node>:Datasets/
+```
+
+Then submit one job per round, and follow it:
+
+```bash
+DATASET=covertype ROUND=sgd:1 sbatch slurm/benchmark.sbatch
+DATASET=cifar10 ROUND=adam:1e-7 sbatch --nodelist=<node> slurm/benchmark.sbatch
+DATASET=mnist CEILING=1e-3 sbatch slurm/benchmark.sbatch
+squeue -u $USER
+tail -f logs/polling-benchmark-<job id>.out
+```
+
+The job asks for two GPUs, 16 CPUs, 64 GB and a day on `short-simple`, the limits of the cluster it was written for, Apuana at CIn/UFPE, where the GPUs are untyped in SLURM and a node is picked with `--nodelist`. Options on the `sbatch` command line override the file's. A preempted job is requeued and resumes from the runs that had not finished, and a job submitted again after a timeout or a cancel does the same. The records are written to the clone on the cluster; bring them back with
+
+```bash
+rsync -av <user>@<login node>:Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/results/ results/
+```
 
 ## Experimental setup
 
@@ -111,13 +172,17 @@ Set `DATASET` and its entry in `DATA_DIRS` in the first code cells, then run the
 │   ├── models.py              # SimpleCNN and SimpleMLP
 │   ├── methods.py             # the thirteen configurations and their hyperparameters
 │   ├── sweep.py               # runs configurations over seeds, records and reads back runs
+│   ├── rounds.py              # the learning-rate rounds and the ceiling test of SPS and Armijo
+│   ├── pool.py                # runs side by side, several per GPU
 │   └── plots.py               # the figures, drawn from the records
+├── slurm/benchmark.sbatch     # one round or ceiling of one dataset per cluster job
 ├── notebooks/benchmark.ipynb  # drives the benchmark package, committed without outputs
 ├── tests/                     # pytest suite for the package and the benchmark
-├── results/<dataset>/         # one JSON per (method, seed)
+├── results/<dataset>/         # one JSON per (method, seed); rounds/ and ceilings/ hold the rounds
 ├── images/<dataset>/          # the figures of each dataset
 ├── docs/                      # how it works, results, reproducing; pt-br/ holds the Portuguese
 ├── models/                    # best checkpoints (.pt, gitignored)
+├── logs/                      # logs of the pool and the cluster jobs (gitignored)
 ├── pyproject.toml
 ├── CHANGELOG.md
 ├── README.md

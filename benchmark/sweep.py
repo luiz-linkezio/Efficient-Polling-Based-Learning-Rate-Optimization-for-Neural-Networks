@@ -4,6 +4,9 @@ A finished run is written to ``results/<dataset>/<method>_seed<N>.json`` and rea
 back instead of retrained afterwards, so a sweep can stop and resume at any point.
 Every table and figure is drawn from those files, never from a run held in memory,
 so a figure cannot disagree with the table next to it.
+
+A variant of an experiment, such as a learning-rate round, records into a folder
+of its own under ``results/<dataset>/``, which the main table never reads.
 """
 
 from __future__ import annotations
@@ -33,6 +36,9 @@ from .methods import (
     Training,
     build_epoch_polling,
     build_optimizer,
+    label,
+    optimizer_name,
+    rate_text,
     run_key,
 )
 from .models import build_model
@@ -42,7 +48,9 @@ __all__ = [
     "Experiment",
     "load_initial_lr_runs",
     "load_runs",
+    "record_label",
     "results_table",
+    "run_setting",
     "summarize",
 ]
 
@@ -183,7 +191,11 @@ class Experiment:
         loss_fn = nn.CrossEntropyLoss()
         checkpoint = self.checkpoint_path(method, seed, lr)
 
-        print(f"\n=== {self.spec.name} | {key} | seed {seed} | {epochs} epochs ===", flush=True)
+        setting = f"{optimizer_name(hp.training.optimizer)} {rate_text(hp.training.lr)}"
+        print(
+            f"\n=== {self.spec.name} | {key} | {setting} | seed {seed} | {epochs} epochs ===",
+            flush=True,
+        )
         if method in ABLATIONS:
             print(f"trigger calibrated to a {hp.ablation.poll_rate:.2%} poll rate", flush=True)
         started = time.perf_counter()
@@ -210,6 +222,7 @@ class Experiment:
             "seed": seed,
             "epochs": epochs,
             "lr0": hp.training.lr,
+            "optimizer": hp.training.optimizer,
             "best_val": history.best_val_acc,
             "best_epoch": history.best_epoch,
             "test_acc": test_acc,
@@ -255,12 +268,43 @@ class Experiment:
                 continue
             result = self.run_one(method, seed, epochs, lr)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(result, indent=2))
+            # Written aside and moved into place, so a run killed mid-write (a
+            # preempted cluster job) leaves no half a record to be read back.
+            partial = path.with_name(path.name + ".partial")
+            partial.write_text(json.dumps(result, indent=2))
+            partial.replace(path)
             runs.append(result)
         return runs
 
     def load_runs(self) -> dict[str, list[dict[str, Any]]]:
         return load_runs(Path(self.results_dir))
+
+    def variant(
+        self,
+        name: str,
+        hyperparameters: Hyperparameters,
+        calibrate_ablations: bool | None = None,
+    ) -> Experiment:
+        """The same dataset and seeds under other settings, recorded apart.
+
+        Records go to ``<results_dir>/<name>/`` and checkpoints to
+        ``<models_dir>/<name>/``, so two variants running at once never restore
+        each other's weights and the main table never reads a variant's runs.
+        The data this experiment already loaded is shared, not read again.
+        """
+        other = replace(
+            self,
+            results_dir=Path(self.results_dir) / name,
+            models_dir=Path(self.models_dir) / name,
+            hyperparameters=hyperparameters,
+            calibrate_ablations=(
+                self.calibrate_ablations if calibrate_ablations is None else calibrate_ablations
+            ),
+        )
+        for cached in ("normalization", "train_set", "test_set"):
+            if cached in self.__dict__:
+                other.__dict__[cached] = self.__dict__[cached]
+        return other
 
 
 # --- reading the records back ------------------------------------------------
@@ -294,6 +338,20 @@ def load_initial_lr_runs(
     return dict(sorted(found.items()))
 
 
+def run_setting(run: dict[str, Any]) -> tuple[str, float]:
+    """The base optimizer and starting rate a record says it ran with.
+
+    Records written before the learning-rate rounds carry neither field when
+    they are old enough, and no optimizer in any case: they stepped with SGD.
+    """
+    return run.get("optimizer", "sgd"), float(run.get("lr0", Training.lr))
+
+
+def record_label(method: str, run: dict[str, Any]) -> str:
+    """How a table names a recorded method: after the optimizer and rate it ran with."""
+    return label(method, *run_setting(run))
+
+
 def summarize(values: list[float]) -> tuple[float, float]:
     """Mean and sample standard deviation; the deviation of a single run is zero."""
     if not values:
@@ -324,7 +382,7 @@ def results_table(runs_per_method: dict[str, list[dict[str, Any]]]) -> str:
         steps_m, _ = summarize([float(r["steps"]) for r in runs])
         polled = f"{poll_m:.2%}" if poll_m else "n/a"
         lines.append(
-            f"| {LABELS.get(method, method).strip()} "
+            f"| {record_label(method, runs[0]).strip()} "
             f"| {val_m:.2%} ± {val_s:.2%} "
             f"| {acc_m:.2%} ± {acc_s:.2%} "
             f"| {loss_m:.4f} ± {loss_s:.4f} "

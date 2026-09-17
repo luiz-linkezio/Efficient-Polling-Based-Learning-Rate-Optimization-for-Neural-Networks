@@ -204,6 +204,25 @@ def test_a_recorded_run_is_read_back_instead_of_retrained(tmp_path: Path) -> Non
     assert run["method"] == "baseline"
 
 
+def test_a_finished_run_is_recorded_whole_and_a_half_written_one_is_never_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A preempted job can die while a record is being written."""
+    experiment = Experiment("cifar10", tmp_path / "missing", results_dir=tmp_path)
+    monkeypatch.setattr(
+        experiment, "run_one", lambda method, seed, epochs, lr: record(method, seed)
+    )
+    (tmp_path / "cosine_seed42.json.partial").write_text('{"method": "cos')
+
+    experiment.sweep("baseline", seeds=[42])
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "baseline_seed42.json",
+        "cosine_seed42.json.partial",
+    ]
+    assert list(experiment.load_runs()) == ["baseline"]
+
+
 def test_calibrated_ablations_read_the_efficient_run_of_the_first_seed(tmp_path: Path) -> None:
     efficient = record("efficient", 42, poll_fraction=0.1011)
     (tmp_path / "efficient_seed42.json").write_text(json.dumps(efficient))

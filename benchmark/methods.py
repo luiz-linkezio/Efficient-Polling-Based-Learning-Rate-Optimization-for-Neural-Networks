@@ -6,6 +6,10 @@ between two runs of one seed.
 
 A new method is a subclass of ``PollingOptimizer`` in the package, one entry in
 :data:`LABELS` and one branch in :func:`build_optimizer`.
+
+Every method except Adam, SPS and Armijo steps with ``Training.optimizer``: SGD
+in the main table, Adam as well in the learning-rate rounds of
+:mod:`benchmark.rounds`.
 """
 
 from __future__ import annotations
@@ -15,14 +19,15 @@ from typing import Any
 
 import torch
 from torch import nn
+from torch.optim import Optimizer
 
 from efficient_polling_lr_scheduler import (
     SPSSGD,
     ArmijoSGD,
-    EfficientPollingSGD,
+    EfficientPollingOptimizer,
     EfficientRelativeEpochPolling,
-    EfficientRelativePollingSGD,
-    PollingSGD,
+    EfficientRelativePollingOptimizer,
+    PollingOptimizer,
 )
 
 from .datasets import DatasetSpec, blowup_loss
@@ -31,14 +36,20 @@ __all__ = [
     "ABLATIONS",
     "LABELS",
     "METHODS",
+    "OPTIMIZERS",
+    "SGD_ONLY",
     "Ablation",
     "Comparators",
     "EfficientPolling",
     "EfficientRelative",
     "Hyperparameters",
     "Training",
+    "base_optimizer",
     "build_epoch_polling",
     "build_optimizer",
+    "label",
+    "optimizer_name",
+    "rate_text",
     "run_key",
 ]
 
@@ -66,6 +77,14 @@ METHODS = tuple(LABELS)
 # The two variants that swap Efficient Polling's trigger and keep everything else.
 ABLATIONS = ("efficient_fixed", "efficient_random")
 
+# The optimizers a method can step with, and how the tables write them.
+OPTIMIZERS = {"sgd": "SGD", "adam": "Adam"}
+
+# Step-size rules whose formulas assume the step follows the gradient: the Polyak
+# step divides by ||g||^2 and the Armijo test asks for a decrease of lr * ||g||^2.
+# Both hold for SGD only, so neither runs on another optimizer.
+SGD_ONLY = ("sps", "armijo")
+
 
 @dataclass
 class Training:
@@ -77,6 +96,8 @@ class Training:
     val_fraction: float = 0.1
     # Changes the loading speed, never the batches: the samples are already in memory.
     num_workers: int = 0
+    # What every method except Adam, SPS and Armijo steps with; see OPTIMIZERS.
+    optimizer: str = "sgd"
 
 
 @dataclass
@@ -90,6 +111,9 @@ class Comparators:
 
     ``sps_max_lr`` and ``armijo_lr_max`` are that same ceiling, so no adaptive
     method may take a step the others were never allowed to consider.
+
+    A learning-rate round gives every method the same rate, so there the
+    schedules start at the round's rate instead; see :mod:`benchmark.rounds`.
     """
 
     scheduled_lr: float = 1e-1
@@ -169,6 +193,46 @@ def run_key(method: str, lr: float | None = None) -> str:
     return method if lr is None else f"{method}_lr{lr:g}"
 
 
+def optimizer_name(optimizer: str) -> str:
+    """How the tables write a base optimizer, refusing one the benchmark does not build."""
+    try:
+        return OPTIMIZERS[optimizer]
+    except KeyError:
+        known = ", ".join(OPTIMIZERS)
+        raise ValueError(f"unknown optimizer {optimizer!r}; known optimizers are {known}") from None
+
+
+def base_optimizer(optimizer: str, params: Any, lr: float) -> Optimizer:
+    """The plain optimizer a method steps with, before polling or a schedule drives it."""
+    optimizer_name(optimizer)
+    if optimizer == "adam":
+        return torch.optim.Adam(params, lr=lr)
+    return torch.optim.SGD(params, lr=lr)
+
+
+def rate_text(lr: float) -> str:
+    """A learning rate as the tables write it: ``1e-3``, not ``0.001``, and ``1``, not ``1e0``."""
+    mantissa, exponent = f"{lr:e}".split("e")
+    mantissa = mantissa.rstrip("0").rstrip(".")
+    return mantissa if int(exponent) == 0 else f"{mantissa}e{int(exponent)}"
+
+
+def label(method: str, optimizer: str = "sgd", lr: float = Training.lr) -> str:
+    """How a table names a method that stepped with ``optimizer`` from ``lr``.
+
+    With the defaults this is :data:`LABELS`; a learning-rate round changes the
+    optimizer of the fixed rate and of the schedules, and the fixed rate itself.
+    """
+    if method not in LABELS:
+        return method
+    name = optimizer_name(optimizer)
+    if method == "baseline":
+        return f"{name} (fixed {rate_text(lr)})"
+    if method == "adam":
+        return f"Adam ({rate_text(lr)})"
+    return LABELS[method].replace("SGD", name)
+
+
 def build_optimizer(
     method: str,
     model: nn.Module,
@@ -180,26 +244,38 @@ def build_optimizer(
 
     The optimizer is a plain ``torch.optim`` one or one of the package's polling
     optimizers, which wrap it; :func:`~efficient_polling_lr_scheduler.fit` takes both.
+    What it steps with is ``Training.optimizer``, except for Adam, which is Adam,
+    and for SPS and Armijo, which refuse anything but SGD.
     """
     lr = hyperparameters.training.lr
+    name = hyperparameters.training.optimizer
     c = hyperparameters.comparators
 
+    if method in SGD_ONLY and name != "sgd":
+        raise ValueError(
+            f"{method} is a step-size rule for SGD: its formula assumes the step follows "
+            f"the gradient, which {optimizer_name(name)} does not"
+        )
+
+    def base(rate: float = lr) -> Optimizer:
+        return base_optimizer(name, model.parameters(), rate)
+
     if method == "baseline":
-        return torch.optim.SGD(model.parameters(), lr=lr), None
+        return base(), None
     if method == "adam":
         return torch.optim.Adam(model.parameters(), lr=lr), None
     if method == "cosine":
-        optimizer = torch.optim.SGD(model.parameters(), lr=c.scheduled_lr)
+        optimizer = base(c.scheduled_lr)
         return optimizer, torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=hyperparameters.training.epochs, eta_min=c.cosine_eta_min
         )
     if method == "step":
-        optimizer = torch.optim.SGD(model.parameters(), lr=c.scheduled_lr)
+        optimizer = base(c.scheduled_lr)
         return optimizer, torch.optim.lr_scheduler.StepLR(
             optimizer, step_size=c.step_size, gamma=c.step_gamma
         )
     if method == "plateau":
-        optimizer = torch.optim.SGD(model.parameters(), lr=c.scheduled_lr)
+        optimizer = base(c.scheduled_lr)
         return optimizer, torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode="min", factor=c.plateau_factor, patience=c.plateau_patience
         )
@@ -216,12 +292,12 @@ def build_optimizer(
         )
         return armijo, None
     if method == "polling":
-        return PollingSGD(model, lr=lr), None
+        return PollingOptimizer(base(), module=model), None
     if method == "efficient_relative":
         r = hyperparameters.relative
-        relative = EfficientRelativePollingSGD(
-            model,
-            lr=lr,
+        relative = EfficientRelativePollingOptimizer(
+            base(),
+            module=model,
             multiplier=r.multiplier,
             lr_max=r.lr_max,
             spike_z=r.spike_z,
@@ -229,8 +305,8 @@ def build_optimizer(
         )
         return relative, None
     if method == "efficient_relative_epoch":
-        # Per epoch the controller drives a plain SGD; see build_epoch_polling().
-        return torch.optim.SGD(model.parameters(), lr=lr), None
+        # Per epoch the controller drives the plain optimizer; see build_epoch_polling().
+        return base(), None
     if method in ("efficient", *ABLATIONS):
         e = hyperparameters.efficient
         a = hyperparameters.ablation
@@ -250,7 +326,7 @@ def build_optimizer(
             # everything else does, and never touch the global RNG, which would
             # change this run's batch order.
             kwargs.update(trigger="random", poll_probability=a.poll_probability, poll_seed=seed)
-        return EfficientPollingSGD(model, lr=lr, **kwargs), None
+        return EfficientPollingOptimizer(base(), module=model, **kwargs), None
 
     known = ", ".join(METHODS)
     raise ValueError(f"unknown method {method!r}; known methods are {known}")
