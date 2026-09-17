@@ -62,9 +62,11 @@ class Experiment:
     """One dataset's comparison: where its data and records live, and how it runs.
 
     ``calibrate_ablations`` sets the two trigger ablations to the poll rate
-    Efficient Polling measured on the first seed, read from its record when an
-    ablation run starts. That is how the recorded runs of every dataset except
-    CIFAR-10 were made; CIFAR-10's used the paper's 5%.
+    Efficient Polling measured on ``calibration_seed``, the first seed by
+    default, read from its record when an ablation run starts. That is how the
+    recorded runs of every dataset except CIFAR-10 were made; CIFAR-10's used
+    the paper's 5%. One process per run (``benchmark.pool``) holds one seed, so
+    it names the seed the whole sweep calibrates from instead of inheriting it.
     """
 
     dataset: str
@@ -75,6 +77,7 @@ class Experiment:
     device: str | None = None  # default: cuda when there is one
     hyperparameters: Hyperparameters = field(default_factory=Hyperparameters)
     calibrate_ablations: bool = False
+    calibration_seed: int | None = None  # default: the first seed
 
     def __post_init__(self) -> None:
         self.spec: DatasetSpec = spec_for(self.dataset)
@@ -142,9 +145,15 @@ class Experiment:
 
     # --- running -------------------------------------------------------------
 
+    @property
+    def ablation_seed(self) -> int:
+        """The seed whose Efficient Polling run the trigger ablations are calibrated to."""
+        return self.seeds[0] if self.calibration_seed is None else self.calibration_seed
+
     def measured_poll_rate(self, seed: int | None = None) -> float:
-        """The share of batches Efficient Polling polled on a seed, the first by default."""
-        seed = self.seeds[0] if seed is None else seed
+        """The share of batches Efficient Polling polled on a seed, the calibration one by
+        default."""
+        seed = self.ablation_seed if seed is None else seed
         path = self.result_path("efficient", seed)
         if not path.exists():
             raise FileNotFoundError(

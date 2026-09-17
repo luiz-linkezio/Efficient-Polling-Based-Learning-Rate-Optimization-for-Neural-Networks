@@ -169,6 +169,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="calibrate both trigger ablations to the poll rate efficient measured on the "
         "first seed, as the recorded runs of every dataset but CIFAR-10 were",
     )
+    parser.add_argument(
+        "--calibration-seed",
+        type=int,
+        default=None,
+        help="seed whose efficient run the ablations are calibrated to; default: the first "
+        "of --seeds, which is what a sweep over every seed uses",
+    )
 
     defaults = Hyperparameters()
     settings = parser.add_argument_group("hyperparameters")
@@ -209,6 +216,7 @@ def build_experiment(args: argparse.Namespace) -> Experiment:
         device=args.device,
         hyperparameters=hyperparameters,
         calibrate_ablations=args.calibrate_ablations,
+        calibration_seed=args.calibration_seed,
     )
     if args.round is not None:
         return round_experiment(experiment, args.round)

@@ -267,6 +267,50 @@ def test_the_command_line_starts_one_benchmark_run_per_method_and_seed_on_altern
     assert "2 runs to make, 2 at a time on GPU 0, GPU 1" in capsys.readouterr().out
 
 
+def test_every_run_calibrates_from_the_sweeps_first_seed_not_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A process holds one seed, so the seed to calibrate from is named outright:
+    left to itself, the ablation of seed 43 read a run of seed 43 that a sweep
+    never calibrates from, and that was still being made."""
+    started: list[list[str]] = []
+    write_record(tmp_path / "rounds" / "sgd_lr1", "efficient", 42)
+
+    class Process(Run):
+        def __init__(self, command, env, stdout, stderr) -> None:
+            super().__init__(Task("efficient_fixed", 0), polls=0)
+            started.append(command)
+
+    monkeypatch.setattr(pool.subprocess, "Popen", Process)
+    monkeypatch.setattr(pool.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(pool, "print_summary", lambda args, experiment: None)
+
+    pool.main(
+        [
+            "--log-dir",
+            str(tmp_path / "logs"),
+            "--dataset",
+            "covertype",
+            "--data-dir",
+            "/nowhere",
+            "--device",
+            "cpu",
+            "--results-dir",
+            str(tmp_path),
+            "--round",
+            "sgd:1",
+            "--methods",
+            "efficient_fixed",
+            "--seeds",
+            "42",
+            "43",
+        ]
+    )
+
+    runs = [parse_args(command[3:]) for command in started]
+    assert [(r.seeds, r.calibration_seed) for r in runs] == [([42], 42), ([43], 42)]
+
+
 def test_the_command_line_says_which_runs_did_not_finish(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

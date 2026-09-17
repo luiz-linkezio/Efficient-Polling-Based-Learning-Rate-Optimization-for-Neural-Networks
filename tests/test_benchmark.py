@@ -237,6 +237,24 @@ def test_calibrated_ablations_read_the_efficient_run_of_the_first_seed(tmp_path:
     assert experiment.hyperparameters_for("efficient").ablation.poll_rate == 0.05
 
 
+def test_a_sweep_of_one_seed_can_be_told_which_seed_to_calibrate_from(tmp_path: Path) -> None:
+    """One process per run holds one seed, and its own is not the reference."""
+    (tmp_path / "efficient_seed42.json").write_text(
+        json.dumps(record("efficient", 42, poll_fraction=0.0625))
+    )
+    experiment = Experiment(
+        "cifar100",
+        "/nowhere",
+        seeds=(43,),
+        results_dir=tmp_path,
+        calibrate_ablations=True,
+        calibration_seed=42,
+    )
+
+    assert experiment.ablation_seed == 42
+    assert experiment.hyperparameters_for("efficient_fixed").ablation.poll_rate == 0.0625
+
+
 def test_calibrating_before_the_efficient_run_exists_says_what_is_missing(tmp_path: Path) -> None:
     experiment = Experiment("mnist", "/nowhere", results_dir=tmp_path, calibrate_ablations=True)
 
