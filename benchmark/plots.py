@@ -23,8 +23,8 @@ from matplotlib import animation
 from matplotlib.figure import Figure
 
 from .datasets import DATASETS, spec_for
-from .methods import LABELS, EfficientPolling
-from .sweep import REPO_DIR, load_initial_lr_runs, load_runs
+from .methods import LABELS, EfficientPolling, optimizer_name, rate_text
+from .sweep import REPO_DIR, load_initial_lr_runs, load_runs, record_label, run_setting
 
 __all__ = [
     "METHOD_COLORS",
@@ -175,7 +175,7 @@ def divergence(runs: list[dict[str, Any]], key: str = "val_loss") -> tuple[int |
 def diverged_label(method: str, runs: list[dict[str, Any]]) -> tuple[str, int | None]:
     """Full legend text, saying so when some of the method's seeds diverged."""
     first_nan, count = divergence(runs)
-    label = LABELS.get(method, method).strip()
+    label = record_label(method, runs[0]).strip()
     if count:
         label += f" ({count}/{len(runs)} diverged)"
     return label, first_nan
@@ -185,6 +185,10 @@ def short_label(method: str, runs: list[dict[str, Any]]) -> tuple[str, int | Non
     """Compact legend text, saying so when some of the method's seeds diverged."""
     first_nan, count = divergence(runs)
     label = SHORT_LABELS.get(method, method)
+    if method == "baseline":
+        # SGD 1e-3 in the main table, but a learning-rate round moves both.
+        optimizer, lr = run_setting(runs[0])
+        label = f"{optimizer_name(optimizer)} {rate_text(lr)}"
     if count:
         label += f" ({count}/{len(runs)} div.)"
     return label, first_nan

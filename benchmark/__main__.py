@@ -2,6 +2,8 @@
 
     python -m benchmark --data-dir /path/to/cifar-10-batches-py --seeds 42 43 44 45 46
     python -m benchmark --dataset mnist --data-dir /path/to/MNIST --methods efficient --epochs 20
+    python -m benchmark --data-dir /path/to/cifar-10-batches-py --round adam:1 --seeds 42 43
+    python -m benchmark --data-dir /path/to/cifar-10-batches-py --ceiling 1e-7 --seeds 42 43
 
 Run from the repository root. Every (method, seed) is recorded in
 ``results/<dataset>/`` when it ends and skipped the next time, so a sweep can be
@@ -17,7 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from .datasets import DATASETS
-from .methods import METHODS, Hyperparameters
+from .methods import METHODS, Hyperparameters, rate_text
+from .rounds import CEILING_METHODS, ROUND_METHODS, Round, ceiling_experiment, round_experiment
 from .sweep import Experiment, results_table
 
 
@@ -25,6 +28,17 @@ def _ceiling(text: str) -> float | None:
     """A rate ceiling; ``inf`` means none."""
     value = float(text)
     return None if math.isinf(value) else value
+
+
+def _round(text: str) -> Round:
+    """A learning-rate round, written ``OPTIMIZER:RATE``."""
+    optimizer, colon, rate = text.partition(":")
+    try:
+        if not colon:
+            raise ValueError(f"expected OPTIMIZER:RATE, such as adam:1e-7, got {text!r}")
+        return Round(optimizer, float(rate))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
 
 
 # Every setting a flag can change: (flag, group in Hyperparameters, field, type, help).
@@ -40,7 +54,7 @@ SETTINGS: tuple[tuple[str, str, str, Callable[[str], Any], str], ...] = (
         "comparators",
         "scheduled_lr",
         float,
-        "initial rate of the cosine, step and plateau schedules",
+        "initial rate of the cosine, step and plateau schedules; a round starts them at its own",
     ),
     ("--step-size", "comparators", "step_size", int, "epochs between two step decays"),
     ("--step-gamma", "comparators", "step_gamma", float, "factor of each step decay"),
@@ -110,15 +124,38 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "which files each one expects and where to get them",
     )
     parser.add_argument(
-        "--methods", nargs="+", choices=METHODS, default=list(METHODS), metavar="METHOD"
+        "--methods",
+        nargs="+",
+        choices=METHODS,
+        default=None,
+        metavar="METHOD",
+        help="default: every method, or every method of the round or of the ceiling test",
     )
     parser.add_argument("--seeds", nargs="+", type=int, default=[42])
-    parser.add_argument(
+    variant = parser.add_mutually_exclusive_group()
+    variant.add_argument(
         "--lr",
         type=float,
         default=None,
         help="start every method at this rate instead of 1e-3; the runs are recorded "
         "as <method>_lr<rate>, apart from the main table (the initial-rate robustness runs)",
+    )
+    variant.add_argument(
+        "--round",
+        type=_round,
+        default=None,
+        metavar="OPTIMIZER:RATE",
+        help="a learning-rate round, such as adam:1e-7: every method of the round steps with "
+        "that optimizer from that rate, the schedules included, with the ablations calibrated, "
+        "recorded in results/<dataset>/rounds/<optimizer>_lr<rate>/",
+    )
+    variant.add_argument(
+        "--ceiling",
+        type=float,
+        default=None,
+        metavar="RATE",
+        help="SPS and Armijo on SGD under this ceiling, "
+        "recorded in results/<dataset>/ceilings/sgd_lr<rate>/",
     )
     parser.add_argument("--results-dir", default=None, help="default: results/<dataset>")
     parser.add_argument("--models-dir", default=None, help="default: models/")
@@ -138,7 +175,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     for flag, group, name, kind, text in SETTINGS:
         default = getattr(getattr(defaults, group), name)
         settings.add_argument(flag, type=kind, default=default, help=f"{text} (default: {default})")
-    return parser.parse_args(argv)
+
+    args = parser.parse_args(argv)
+    allowed, study = METHODS, None
+    if args.round is not None:
+        allowed, study = ROUND_METHODS, "a round"
+    elif args.ceiling is not None:
+        if not args.ceiling > 0:
+            parser.error(f"--ceiling must be positive, got {args.ceiling}")
+        allowed, study = CEILING_METHODS, "the ceiling test"
+    if args.methods is None:
+        args.methods = list(allowed)
+    elif study is not None:
+        outside = [method for method in args.methods if method not in allowed]
+        if outside:
+            parser.error(
+                f"{', '.join(outside)} not part of {study}, whose methods are {', '.join(allowed)}"
+            )
+    return args
 
 
 def build_experiment(args: argparse.Namespace) -> Experiment:
@@ -146,7 +200,7 @@ def build_experiment(args: argparse.Namespace) -> Experiment:
     for flag, group, name, _, _ in SETTINGS:
         value = getattr(args, flag.lstrip("-").replace("-", "_"))
         setattr(getattr(hyperparameters, group), name, value)
-    return Experiment(
+    experiment = Experiment(
         dataset=args.dataset,
         data_dir=Path(args.data_dir),
         seeds=tuple(args.seeds),
@@ -156,6 +210,11 @@ def build_experiment(args: argparse.Namespace) -> Experiment:
         hyperparameters=hyperparameters,
         calibrate_ablations=args.calibrate_ablations,
     )
+    if args.round is not None:
+        return round_experiment(experiment, args.round)
+    if args.ceiling is not None:
+        return ceiling_experiment(experiment, args.ceiling)
+    return experiment
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -167,7 +226,12 @@ def main(argv: list[str] | None = None) -> None:
             experiment.sweep(method, seeds=[seed], lr=args.lr, overwrite=args.overwrite)
 
     runs = experiment.load_runs()
-    print(f"\n### {experiment.spec.name}, mean ± stdev over the recorded seeds\n")
+    title = experiment.spec.name
+    if args.round is not None:
+        title += f", round {args.round.title}"
+    elif args.ceiling is not None:
+        title += f", SPS and Armijo under a {rate_text(args.ceiling)} ceiling"
+    print(f"\n### {title}, mean ± stdev over the recorded seeds\n")
     print(results_table({m: runs[m] for m in args.methods if m in runs}))
 
 

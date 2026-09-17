@@ -116,6 +116,14 @@ def test_a_diverged_seed_is_counted_in_the_legend(tmp_path: Path) -> None:
     assert label == "cosine (1/2 div.)"
 
 
+def test_the_baseline_is_named_in_the_legend_after_the_optimizer_and_rate_it_ran_with() -> None:
+    """A learning-rate round moves both, so the legend reads them from the record."""
+    main_table = plots.short_label("baseline", [record("baseline", 42)])[0]
+    adam_round = plots.short_label("baseline", [record("baseline", 42, optimizer="adam", lr0=1e-1)])
+
+    assert (main_table, adam_round[0]) == ("SGD 1e-3", "Adam 1e-1")
+
+
 def test_figures_of_two_datasets_land_in_different_folders() -> None:
     assert plots.figures_dir("cifar10") == REPO_DIR / "images" / "cifar10"
     assert plots.figures_dir("mnist") != plots.figures_dir("cifar10")
