@@ -58,6 +58,8 @@ __all__ = [
     "ceiling_experiment",
     "ceiling_hyperparameters",
     "ceilings_table",
+    "rate_table",
+    "rate_tables",
     "round_experiment",
     "round_hyperparameters",
     "rounds_table",
@@ -146,12 +148,46 @@ def ceiling_experiment(experiment: Experiment, ceiling: float) -> Experiment:
     )
 
 
+def rate_table(
+    experiment: Experiment,
+    rate: float,
+    optimizers: Sequence[str] = tuple(OPTIMIZERS),
+    methods: Sequence[str] = ROUND_METHODS,
+) -> str:
+    """Test accuracy of every method started at one rate, as Markdown: one column per optimizer."""
+    columns = [
+        (optimizer_name(optimizer), round_experiment(experiment, Round(optimizer, rate)))
+        for optimizer in optimizers
+    ]
+    return _accuracy_table(columns, methods, ROUND_LABELS, len(experiment.seeds))
+
+
+def rate_tables(
+    experiment: Experiment,
+    rates: Sequence[float] = RATES,
+    methods: Sequence[str] = ROUND_METHODS,
+) -> str:
+    """One table per starting rate, each headed by the dataset and the rate.
+
+    A rate is what a round asks of a method, so this is the reading that keeps
+    the two rounds of a rate together and the three rates apart.
+    """
+    return "\n\n".join(
+        f"### {experiment.spec.name}, starting rate {rate_text(rate)}\n\n"
+        + rate_table(experiment, rate, methods=methods)
+        for rate in rates
+    )
+
+
 def rounds_table(
     experiment: Experiment,
     rounds: Sequence[Round] = ROUNDS,
     methods: Sequence[str] = ROUND_METHODS,
 ) -> str:
-    """Test accuracy of every method in every round, as Markdown: one column per round."""
+    """Test accuracy of every method in every round, as Markdown: one column per round.
+
+    The six rounds at a glance; :func:`rate_tables` splits them by starting rate.
+    """
     columns = [(round_.title, round_experiment(experiment, round_)) for round_ in rounds]
     return _accuracy_table(columns, methods, ROUND_LABELS, len(experiment.seeds))
 
