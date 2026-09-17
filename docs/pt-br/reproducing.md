@@ -118,9 +118,11 @@ Uma rodada registra em `results/<dataset>/rounds/<otimizador>_lr<taxa>/` e o tes
 ```bash
 git clone --branch dev https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks.git
 cd Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks
-uv venv --python 3.12 && uv pip install -e ".[benchmark]"
+python3 -m venv .venv && .venv/bin/pip install -e ".[benchmark]"
 mkdir -p logs
 ```
+
+Serve qualquer Python 3.10 ou mais novo, desde que os nós de computação enxerguem o interpretador que criou o ambiente. O `uv` monta o mesmo ambiente mais rápido, mas ele tranca o cache e o ambiente em que instala, e uma trava de arquivo fica pendurada para sempre num home montado por NFS com o serviço de travas quebrado, que é o que aconteceu no Apuana em setembro de 2026. O `pip` não usa esse tipo de trava.
 
 O job lê os datasets de `~/Datasets/`, nas pastas que o `DATA_DIRS` do notebook nomeia (`DATA_ROOT` ou `DATA_DIR` apontam para outro lugar). De uma máquina que os tenha:
 

@@ -118,9 +118,11 @@ A round records into `results/<dataset>/rounds/<optimizer>_lr<rate>/` and the ce
 ```bash
 git clone --branch dev https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks.git
 cd Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks
-uv venv --python 3.12 && uv pip install -e ".[benchmark]"
+python3 -m venv .venv && .venv/bin/pip install -e ".[benchmark]"
 mkdir -p logs
 ```
+
+Any Python 3.10 or newer works, as long as the compute nodes see the interpreter it was created from. `uv` builds the same environment faster, but it locks its cache and the environment it installs into, and a file lock hangs for good on a home directory mounted over NFS with a broken lock daemon, which is what Apuana's did in September 2026. `pip` takes no such lock.
 
 The job reads the datasets from `~/Datasets/`, in the folders the notebook's `DATA_DIRS` names (`DATA_ROOT` or `DATA_DIR` point it elsewhere). From a machine that has them:
 
