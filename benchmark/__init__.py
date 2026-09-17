@@ -9,6 +9,7 @@ this is what compares its methods against the others.
 - ``sweep``: runs them over seeds, records each run, reads the records back.
 - ``rounds``: the learning-rate rounds, every method on SGD or Adam from one
   rate, and the ceiling test of SPS and Armijo.
+- ``pool``: makes a sweep's runs side by side, several per GPU.
 - ``plots``: the figures, drawn from those records.
 
 ``notebooks/benchmark.ipynb`` and ``python -m benchmark`` both drive this code,

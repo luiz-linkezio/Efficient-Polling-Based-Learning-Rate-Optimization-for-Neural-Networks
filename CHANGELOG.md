@@ -39,6 +39,12 @@ four more datasets, the runs on them, and a reorganized repository.
   SPS and Armijo never read a starting rate, so they get a test of their own
   that moves their ceiling instead, on SGD only (`--ceiling RATE`,
   `results/<dataset>/ceilings/`). Nothing has been run in either yet.
+- `python -m benchmark.pool`, which makes a sweep's runs side by side, one
+  process per method and seed, four per GPU by default, and
+  `slurm/benchmark.sbatch`, which runs one round or one ceiling of one dataset
+  per cluster job and resumes from the runs left when the job is preempted or
+  submitted again. Records are now written aside and moved into place, so a
+  run killed while writing one leaves nothing half-written to be read back.
 
 ### Changed
 

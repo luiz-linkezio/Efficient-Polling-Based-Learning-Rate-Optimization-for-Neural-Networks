@@ -268,7 +268,11 @@ class Experiment:
                 continue
             result = self.run_one(method, seed, epochs, lr)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(result, indent=2))
+            # Written aside and moved into place, so a run killed mid-write (a
+            # preempted cluster job) leaves no half a record to be read back.
+            partial = path.with_name(path.name + ".partial")
+            partial.write_text(json.dumps(result, indent=2))
+            partial.replace(path)
             runs.append(result)
         return runs
 

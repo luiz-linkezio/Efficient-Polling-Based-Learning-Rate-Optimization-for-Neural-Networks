@@ -6,6 +6,7 @@
 - [Conjuntos de dados](#conjuntos-de-dados)
 - [Execução](#execução): pela linha de comando ou pelo notebook
 - [Rodadas de learning rate](#rodadas-de-learning-rate): todo método no SGD ou no Adam, a partir de uma taxa
+- [Execução num cluster SLURM](#execução-num-cluster-slurm): várias execuções por GPU, uma rodada por job
 - [Configuração experimental](#configuração-experimental)
 - [Estrutura do repositório](#estrutura-do-repositório)
 
@@ -108,6 +109,41 @@ Uma rodada registra em `results/<dataset>/rounds/<otimizador>_lr<taxa>/` e o tes
 
 **Custo.** Pelas execuções registradas, uma rodada custa o que a tabela principal custa sem Adam, SPS e Armijo: cerca de 8 h de CIFAR-10 para cinco seeds, e umas 57 h de execução nos cinco datasets, quatro dos quais dividiram a GPU três por vez. Uma rodada pode demorar mais, porque o passo do Adam é mais lento que o do SGD e um método que trava na menor candidata faz poll a cada dois batches. SPS e Armijo somam cerca de 1,5 h de CIFAR-10 por teto, 15 h nos cinco datasets.
 
+## Execução num cluster SLURM
+
+`python -m benchmark.pool` aceita as flags de `python -m benchmark` e faz as execuções lado a lado, um processo por `(método, seed)`, quatro por GPU a menos que `--workers` diga outra coisa. Cada processo é o `python -m benchmark` daquele método e seed, então os registros são os que uma varredura sequencial escreveria, menos o `s_per_epoch`: execuções que dividem uma GPU atrasam umas às outras. Execuções com registro são puladas, as ablações calibradas esperam a execução do Efficient Polling na primeira seed, e cada execução grava seu log em `logs/`, numa pasta que espelha a do seu registro em `results/`.
+
+`slurm/benchmark.sbatch` roda uma rodada, ou um teto, de um dataset por job. No nó de login, clone o repositório e crie o ambiente que o job ativa:
+
+```bash
+git clone --branch dev https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks.git
+cd Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks
+uv venv --python 3.12 && uv pip install -e ".[benchmark]"
+mkdir -p logs
+```
+
+O job lê os datasets de `~/Datasets/`, nas pastas que o `DATA_DIRS` do notebook nomeia (`DATA_ROOT` ou `DATA_DIR` apontam para outro lugar). De uma máquina que os tenha:
+
+```bash
+rsync -av ~/Datasets/{cifar-10-python,cifar-100-python,MNIST,fashion-mnist,covertype} <usuário>@<nó de login>:Datasets/
+```
+
+Depois, submeta um job por rodada e acompanhe:
+
+```bash
+DATASET=covertype ROUND=sgd:1 sbatch slurm/benchmark.sbatch
+DATASET=cifar10 ROUND=adam:1e-7 sbatch --nodelist=<nó> slurm/benchmark.sbatch
+DATASET=mnist CEILING=1e-3 sbatch slurm/benchmark.sbatch
+squeue -u $USER
+tail -f logs/polling-benchmark-<id do job>.out
+```
+
+O job pede duas GPUs, 16 CPUs, 64 GB e um dia na `short-simple`, os limites do cluster para o qual foi escrito, o Apuana do CIn/UFPE, onde as GPUs não têm tipo no SLURM e o nó se escolhe com `--nodelist`. Opções na linha de comando do `sbatch` sobrepõem as do arquivo. Um job preemptado volta para a fila e retoma das execuções que não tinham terminado, e um job submetido de novo depois de estourar o tempo ou ser cancelado faz o mesmo. Os registros são escritos no clone do cluster; traga-os de volta com
+
+```bash
+rsync -av <usuário>@<nó de login>:Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/results/ results/
+```
+
 ## Configuração experimental
 
 - **Datasets:** CIFAR-10 e CIFAR-100, 45.000 treino / 5.000 val / 10.000 teste. MNIST e Fashion-MNIST, 54.000 / 6.000 / 10.000. Covertype, 13.608 / 1.512 / 565.892.
@@ -135,13 +171,16 @@ Uma rodada registra em `results/<dataset>/rounds/<otimizador>_lr<taxa>/` e o tes
 │   ├── methods.py             # as treze configurações e seus hiperparâmetros
 │   ├── sweep.py               # roda configurações sobre seeds, registra e relê as execuções
 │   ├── rounds.py              # as rodadas de learning rate e o teste de teto de SPS e Armijo
+│   ├── pool.py                # execuções lado a lado, várias por GPU
 │   └── plots.py               # as figuras, desenhadas a partir dos registros
+├── slurm/benchmark.sbatch     # uma rodada ou teto de um dataset por job do cluster
 ├── notebooks/benchmark.ipynb  # conduz o pacote benchmark, commitado sem saídas
 ├── tests/                     # suíte pytest do pacote e do benchmark
 ├── results/<dataset>/         # um JSON por (método, seed); rounds/ e ceilings/ guardam as rodadas
 ├── images/<dataset>/          # as figuras de cada dataset
 ├── docs/                      # como funciona, resultados, reprodução; pt-br/ tem o português
 ├── models/                    # melhores checkpoints (.pt, gitignored)
+├── logs/                      # logs do pool e dos jobs do cluster (gitignored)
 ├── pyproject.toml
 ├── CHANGELOG.md
 ├── README.md

@@ -224,7 +224,11 @@ def main(argv: list[str] | None = None) -> None:
     for seed in experiment.seeds:
         for method in args.methods:
             experiment.sweep(method, seeds=[seed], lr=args.lr, overwrite=args.overwrite)
+    print_summary(args, experiment)
 
+
+def print_summary(args: argparse.Namespace, experiment: Experiment) -> None:
+    """The table of the methods asked for, read from their records."""
     runs = experiment.load_runs()
     title = experiment.spec.name
     if args.round is not None:

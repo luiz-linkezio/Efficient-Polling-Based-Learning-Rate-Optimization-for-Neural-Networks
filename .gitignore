@@ -27,3 +27,6 @@ build/
 .ipynb_checkpoints/
 
 *.tex
+
+# Logs of python -m benchmark.pool and of the cluster jobs
+logs/
