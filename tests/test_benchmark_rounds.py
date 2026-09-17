@@ -36,6 +36,7 @@ from benchmark.rounds import (
     Round,
     ceiling_experiment,
     ceilings_table,
+    rate_tables,
     round_experiment,
     round_hyperparameters,
     rounds_table,
@@ -356,6 +357,26 @@ def test_the_summary_gives_each_round_a_column_and_marks_what_is_missing(tmp_pat
     assert lines[0] == "| Method | SGD 1e-1 | Adam 1e-1 |"
     assert lines[2] == "| Fixed rate | — | — |"
     assert lines[3] == "| Efficient Polling (ours) | 85.00% ± 7.07% | 50.00% ± 0.00% (1/2) |"
+
+
+def test_each_starting_rate_gets_a_table_of_its_two_rounds(tmp_path: Path) -> None:
+    folder = tmp_path / "rounds"
+    write(
+        folder / "sgd_lr1" / "baseline_seed42.json",
+        record("baseline", 42, lr0=1.0, test_acc=0.7397),
+    )
+    write(
+        folder / "adam_lr1" / "baseline_seed42.json",
+        record("baseline", 42, optimizer="adam", lr0=1.0, test_acc=0.5),
+    )
+    experiment = Experiment("covertype", "/nowhere", seeds=(42,), results_dir=tmp_path)
+
+    tables = rate_tables(experiment, methods=("baseline",))
+
+    assert "### Covertype, starting rate 1\n\n| Method | SGD | Adam |" in tables
+    assert "| Fixed rate | 73.97% ± 0.00% | 50.00% ± 0.00% |" in tables
+    assert "### Covertype, starting rate 1e-3\n" in tables
+    assert tables.count("| Fixed rate |") == len(RATES)
 
 
 def test_the_ceiling_summary_gives_each_ceiling_a_column(tmp_path: Path) -> None:

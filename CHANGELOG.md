@@ -39,6 +39,9 @@ four more datasets, the runs on them, and a reorganized repository.
   SPS and Armijo never read a starting rate, so they get a test of their own
   that moves their ceiling instead, on SGD only (`--ceiling RATE`,
   `results/<dataset>/ceilings/`). Nothing has been run in either yet.
+  The rounds are read back as one table per starting rate, the two optimizers
+  of that rate side by side (`rounds.rate_tables`), and as one compact table of
+  all six.
 - `python -m benchmark.pool`, which makes a sweep's runs side by side, one
   process per method and seed, four per GPU by default, and
   `slurm/benchmark.sbatch`, which runs one round or one ceiling of one dataset
