@@ -40,7 +40,9 @@ four more datasets, the runs on them, and a reorganized repository.
   that moves their ceiling instead, on SGD only (`--ceiling RATE`,
   `results/<dataset>/ceilings/`). Nothing has been run in either yet.
 - `python -m benchmark.pool`, which makes a sweep's runs side by side, one
-  process per method and seed, four per GPU by default, and
+  process per method and seed, four per GPU by default, each told which seed
+  the trigger ablations are calibrated from (`--calibration-seed`, since a
+  process that holds one seed would otherwise read its own run), and
   `slurm/benchmark.sbatch`, which runs one round or one ceiling of one dataset
   per cluster job and resumes from the runs left when the job is preempted or
   submitted again. Records are now written aside and moved into place, so a

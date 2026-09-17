@@ -12,7 +12,9 @@ GPU slow each other down.
 Runs that already have a record are skipped, as in a sequential sweep, so a
 pool that was stopped, or a job the cluster preempted and requeued, starts again
 from the runs that had not finished. When the ablations are calibrated, they
-wait for the Efficient Polling run of the first seed, which is started first.
+wait for the Efficient Polling run of the seed they are calibrated from, which
+is started first and named to every process: a process holds one seed, and left
+to itself each would calibrate from its own run.
 
 Each process writes to ``logs/<dataset>/<variant>/<method>_seed<N>.log``, the
 same folder the records of that sweep sit in under ``results/``.
@@ -78,7 +80,7 @@ def pending(
 ) -> list[Task]:
     """The runs still to make, seed by seed as in a sequential sweep.
 
-    Efficient Polling on the first seed goes first when the ablations are
+    Efficient Polling on the calibration seed goes first when the ablations are
     calibrated from it, so they wait as little as they can.
     """
     tasks = [
@@ -87,7 +89,7 @@ def pending(
         for method in methods
         if overwrite or not experiment.result_path(method, seed, lr).exists()
     ]
-    first = Task("efficient", experiment.seeds[0])
+    first = Task("efficient", experiment.ablation_seed)
     if experiment.calibrate_ablations and first in tasks:
         tasks.remove(first)
         tasks.insert(0, first)
@@ -97,7 +99,7 @@ def pending(
 def calibrated_from(experiment: Experiment, task: Task) -> Task | None:
     """The run a task reads its poll rate from, if it reads one."""
     if experiment.calibrate_ablations and task.method in ABLATIONS:
-        return Task("efficient", experiment.seeds[0])
+        return Task("efficient", experiment.ablation_seed)
     return None
 
 
@@ -222,6 +224,8 @@ def main(argv: list[str] | None = None) -> None:
         env.setdefault("OMP_NUM_THREADS", str(threads))
         if devices:
             env["CUDA_VISIBLE_DEVICES"] = devices[slot % len(devices)]
+        # The seed the ablations calibrate from is named outright: a process
+        # holds one seed, so left to itself it would read its own run.
         command = [
             sys.executable,
             "-m",
@@ -231,6 +235,8 @@ def main(argv: list[str] | None = None) -> None:
             task.method,
             "--seeds",
             str(task.seed),
+            "--calibration-seed",
+            str(experiment.ablation_seed),
         ]
         where = f"GPU {env['CUDA_VISIBLE_DEVICES']}" if devices else "the CPU"
         print(f"started: {task.method} seed {task.seed} on {where}", flush=True)
