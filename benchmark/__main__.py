@@ -244,7 +244,8 @@ def print_summary(args: argparse.Namespace, experiment: Experiment) -> None:
     elif args.ceiling is not None:
         title += f", SPS and Armijo under a {rate_text(args.ceiling)} ceiling"
     print(f"\n### {title}, mean ± stdev over the recorded seeds\n")
-    print(results_table({m: runs[m] for m in args.methods if m in runs}))
+    runs = {m: runs[m] for m in args.methods if m in runs}
+    print(results_table(runs, experiment.hyperparameters))
 
 
 if __name__ == "__main__":

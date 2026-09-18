@@ -42,6 +42,7 @@ from .methods import (
     OPTIMIZERS,
     SGD_ONLY,
     Hyperparameters,
+    initial_lr,
     optimizer_name,
     rate_text,
 )
@@ -154,12 +155,18 @@ def rate_table(
     optimizers: Sequence[str] = tuple(OPTIMIZERS),
     methods: Sequence[str] = ROUND_METHODS,
 ) -> str:
-    """Test accuracy of every method started at one rate, as Markdown: one column per optimizer."""
+    """Test accuracy of every method started at one rate, as Markdown: one column per optimizer.
+
+    The Initial LR column says what each method was given at that rate, which
+    is the same on either optimizer.
+    """
     columns = [
         (optimizer_name(optimizer), round_experiment(experiment, Round(optimizer, rate)))
         for optimizer in optimizers
     ]
-    return _accuracy_table(columns, methods, ROUND_LABELS, len(experiment.seeds))
+    at_rate = columns[0][1].hyperparameters
+    initial = {method: initial_lr(method, at_rate) for method in methods}
+    return _accuracy_table(columns, methods, ROUND_LABELS, len(experiment.seeds), initial)
 
 
 def rate_tables(
@@ -208,6 +215,7 @@ def _accuracy_table(
     methods: Sequence[str],
     labels: Mapping[str, str],
     seeds: int,
+    initial: Mapping[str, str] | None = None,
 ) -> str:
     """Mean ± sample deviation of the test accuracy over the seeds recorded so far.
 
@@ -215,9 +223,10 @@ def _accuracy_table(
     column has not run yet is a dash.
     """
     recorded = [load_runs(variant.results_dir) for _, variant in columns]
+    extra = [] if initial is None else ["Initial LR"]
     lines = [
-        "| Method | " + " | ".join(title for title, _ in columns) + " |",
-        "|---|" + "---|" * len(columns),
+        "| " + " | ".join(["Method", *extra, *(title for title, _ in columns)]) + " |",
+        "|---|" + "---|" * (len(extra) + len(columns)),
     ]
     for method in methods:
         cells = []
@@ -231,5 +240,6 @@ def _accuracy_table(
             if len(runs) < seeds:
                 cell += f" ({len(runs)}/{seeds})"
             cells.append(cell)
-        lines.append(f"| {labels.get(method, method)} | " + " | ".join(cells) + " |")
+        row = [labels.get(method, method), *([] if initial is None else [initial[method]]), *cells]
+        lines.append("| " + " | ".join(row) + " |")
     return "\n".join(lines)

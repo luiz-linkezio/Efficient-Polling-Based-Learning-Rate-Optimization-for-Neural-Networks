@@ -340,7 +340,39 @@ def test_rates_are_written_the_way_the_tables_write_them() -> None:
 def test_a_rounds_table_names_its_baseline_after_the_record() -> None:
     runs = {"baseline": [record("baseline", 42, optimizer="adam", lr0=0.1)]}
 
-    assert results_table(runs).splitlines()[-1].startswith("| Adam (fixed 1e-1) |")
+    row = results_table(runs, in_round("adam", 1e-1)).splitlines()[-1]
+
+    assert row.startswith("| Adam (fixed 1e-1) | 1e-1, fixed |")
+
+
+@pytest.mark.parametrize(
+    ("method", "start"),
+    [
+        ("baseline", "1, fixed"),
+        ("cosine", "1 → 0"),
+        ("step", "1 → 1e-1 → 1e-2"),
+        ("plateau", "1, ×0.5 on plateau"),
+        ("polling", "grid 1e-2–1e2"),
+        ("efficient_random", "grid 1e-2–1e2"),
+        ("efficient_relative", "1, ×÷10, ceiling 1"),
+    ],
+)
+def test_a_rounds_table_says_what_the_round_gave_each_method(method: str, start: str) -> None:
+    table = results_table({method: [record(method, 42, lr0=1.0)]}, in_round("sgd", 1.0))
+
+    assert table.splitlines()[-1].split(" | ")[1] == start
+
+
+def test_the_ceiling_table_says_the_ceiling_sps_and_armijo_were_held_to() -> None:
+    hyperparameters = ceiling_experiment(Experiment("mnist", "/nowhere"), 1e-7).hyperparameters
+    runs = {m: [record(m, 42, lr0=1e-7)] for m in CEILING_METHODS}
+
+    rows = results_table(runs, hyperparameters).splitlines()[2:]
+
+    assert [row.split(" | ")[1] for row in rows] == [
+        "Polyak step, up to 1e-7",
+        "line search from 1e-7",
+    ]
 
 
 def test_the_summary_gives_each_round_a_column_and_marks_what_is_missing(tmp_path: Path) -> None:
@@ -373,8 +405,9 @@ def test_each_starting_rate_gets_a_table_of_its_two_rounds(tmp_path: Path) -> No
 
     tables = rate_tables(experiment, methods=("baseline",))
 
-    assert "### Covertype, starting rate 1\n\n| Method | SGD | Adam |" in tables
-    assert "| Fixed rate | 73.97% ± 0.00% | 50.00% ± 0.00% |" in tables
+    assert "### Covertype, starting rate 1\n\n| Method | Initial LR | SGD | Adam |" in tables
+    assert "| Fixed rate | 1, fixed | 73.97% ± 0.00% | 50.00% ± 0.00% |" in tables
+    assert "| Fixed rate | 1e-7, fixed | — | — |" in tables
     assert "### Covertype, starting rate 1e-3\n" in tables
     assert tables.count("| Fixed rate |") == len(RATES)
 
@@ -456,4 +489,4 @@ def test_a_recorded_round_prints_its_table_without_training(
 
     output = capsys.readouterr().out
     assert "round Adam 1e-1" in output
-    assert "| Adam (fixed 1e-1) |" in output
+    assert "| Adam (fixed 1e-1) | 1e-1, fixed |" in output

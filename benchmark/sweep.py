@@ -36,6 +36,7 @@ from .methods import (
     Training,
     build_epoch_polling,
     build_optimizer,
+    initial_lr,
     label,
     optimizer_name,
     rate_text,
@@ -370,15 +371,21 @@ def summarize(values: list[float]) -> tuple[float, float]:
     return statistics.fmean(values), statistics.stdev(values)
 
 
-def results_table(runs_per_method: dict[str, list[dict[str, Any]]]) -> str:
+def results_table(
+    runs_per_method: dict[str, list[dict[str, Any]]], hyperparameters: Hyperparameters
+) -> str:
     """The paper's table as Markdown: every column is mean ± sample stdev over the seeds.
 
     Test metrics come from each run's own best-validation checkpoint, so the
-    test set never selects anything.
+    test set never selects anything. ``hyperparameters`` are the ones the runs
+    were made with, the experiment's (``Experiment.hyperparameters``): the
+    Initial LR column reads them, since a record keeps its rate but not where a
+    schedule or a polling grid started from it.
     """
     lines = [
-        "| Method | Best Val | Test Acc | Test Loss | Polled | Steps | s/Epoch | Seeds |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Method | Initial LR | Best Val | Test Acc | Test Loss "
+        "| Polled | Steps | s/Epoch | Seeds |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for method, runs in runs_per_method.items():
         if not runs:
@@ -392,6 +399,7 @@ def results_table(runs_per_method: dict[str, list[dict[str, Any]]]) -> str:
         polled = f"{poll_m:.2%}" if poll_m else "n/a"
         lines.append(
             f"| {record_label(method, runs[0]).strip()} "
+            f"| {initial_lr(method, hyperparameters)} "
             f"| {val_m:.2%} ± {val_s:.2%} "
             f"| {acc_m:.2%} ± {acc_s:.2%} "
             f"| {loss_m:.4f} ± {loss_s:.4f} "
