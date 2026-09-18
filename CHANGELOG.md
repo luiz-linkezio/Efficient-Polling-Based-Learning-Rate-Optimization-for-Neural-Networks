@@ -42,6 +42,12 @@ four more datasets, the runs on them, and a reorganized repository.
   The rounds are read back as one table per starting rate, the two optimizers
   of that rate side by side (`rounds.rate_tables`), and as one compact table of
   all six.
+- An Initial LR column in every results table, saying what rate each method
+  was given: `1e-3, fixed` for the fixed rate, `1e-1 → 0` for cosine
+  annealing, `grid 1e-5–1e-1` for the polling methods, the ceiling SPS and
+  Armijo were held to, and so on. The main table starts its methods from
+  different rates, and a round moves all of them, so a row now says which.
+  `results_table` takes the experiment's hyperparameters for it.
 - `python -m benchmark.pool`, which makes a sweep's runs side by side, one
   process per method and seed, four per GPU by default, each told which seed
   the trigger ablations are calibrated from (`--calibration-seed`, since a

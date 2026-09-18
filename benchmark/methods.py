@@ -28,6 +28,7 @@ from efficient_polling_lr_scheduler import (
     EfficientRelativeEpochPolling,
     EfficientRelativePollingOptimizer,
     PollingOptimizer,
+    default_candidate_lrs,
 )
 
 from .datasets import DatasetSpec, blowup_loss
@@ -215,6 +216,38 @@ def rate_text(lr: float) -> str:
     mantissa, exponent = f"{lr:e}".split("e")
     mantissa = mantissa.rstrip("0").rstrip(".")
     return mantissa if int(exponent) == 0 else f"{mantissa}e{int(exponent)}"
+
+
+def initial_lr(method: str, hyperparameters: Hyperparameters) -> str:
+    """The learning rate ``method`` starts from under ``hyperparameters``, as a table writes it.
+
+    Not every method starts from ``Training.lr``: the schedules start from
+    ``scheduled_lr``, polling chooses from a grid around the rate, SPS and
+    Armijo only read a ceiling, and Efficient Relative Polling starts from the
+    rate under a ceiling of its own. So a table says, per method, what it was given.
+    """
+    t, c, r = hyperparameters.training, hyperparameters.comparators, hyperparameters.relative
+    lr, scheduled = rate_text(t.lr), rate_text(c.scheduled_lr)
+    if method in ("baseline", "adam"):
+        return f"{lr}, fixed"
+    if method == "cosine":
+        return f"{scheduled} → {rate_text(c.cosine_eta_min)}"
+    if method == "step":
+        drops = max(1, -(-t.epochs // c.step_size))  # one rate per step period the run reaches
+        return " → ".join(rate_text(c.scheduled_lr * c.step_gamma**k) for k in range(drops))
+    if method == "plateau":
+        return f"{scheduled}, ×{c.plateau_factor:g} on plateau"
+    if method == "sps":
+        return f"Polyak step, up to {rate_text(c.sps_max_lr)}"
+    if method == "armijo":
+        return f"line search from {rate_text(c.armijo_lr_max)}"
+    if method in ("polling", "efficient", *ABLATIONS):
+        grid = default_candidate_lrs(t.lr)
+        return f"grid {rate_text(grid[0])}–{rate_text(grid[-1])}"
+    if method in ("efficient_relative", "efficient_relative_epoch"):
+        ceiling = "no ceiling" if r.lr_max is None else f"ceiling {rate_text(r.lr_max)}"
+        return f"{lr}, ×÷{r.multiplier:g}, {ceiling}"
+    return lr
 
 
 def label(method: str, optimizer: str = "sgd", lr: float = Training.lr) -> str:

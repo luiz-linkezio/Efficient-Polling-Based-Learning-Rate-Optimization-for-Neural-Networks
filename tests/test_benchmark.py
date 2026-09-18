@@ -304,11 +304,39 @@ def test_a_single_run_has_no_spread_and_no_runs_have_no_mean() -> None:
 def test_the_table_reports_mean_and_sample_deviation() -> None:
     seeds = [record("efficient", 42, test_acc=0.8), record("efficient", 43, test_acc=0.9)]
 
-    row = results_table({"efficient": seeds}).splitlines()[-1]
+    row = results_table({"efficient": seeds}, Hyperparameters()).splitlines()[-1]
 
     assert row.startswith("| Efficient Polling (ours) |")
     assert "85.00% ± 7.07%" in row
     assert row.endswith("| 2 |")
+
+
+@pytest.mark.parametrize(
+    ("method", "start"),
+    [
+        ("baseline", "1e-3, fixed"),
+        ("adam", "1e-3, fixed"),
+        ("cosine", "1e-1 → 0"),
+        ("step", "1e-1 → 1e-2 → 1e-3"),
+        ("plateau", "1e-1, ×0.5 on plateau"),
+        ("sps", "Polyak step, up to 1e-1"),
+        ("armijo", "line search from 1e-1"),
+        ("polling", "grid 1e-5–1e-1"),
+        ("efficient", "grid 1e-5–1e-1"),
+        ("efficient_fixed", "grid 1e-5–1e-1"),
+        ("efficient_relative", "1e-3, ×÷10, ceiling 1e-1"),
+        ("efficient_relative_epoch", "1e-3, ×÷10, ceiling 1e-1"),
+    ],
+)
+def test_the_table_says_what_rate_each_method_of_the_main_table_started_from(
+    method: str, start: str
+) -> None:
+    """The main table mixes starting points: the fixed rate sits at 1e-3 and the
+    schedules start at 1e-1, so each row says which one it was given."""
+    header, _, row = results_table({method: [record(method, 42)]}, Hyperparameters()).splitlines()
+
+    assert header.startswith("| Method | Initial LR | Best Val |")
+    assert row.split(" | ")[1] == start
 
 
 # --- command line -----------------------------------------------------------------
