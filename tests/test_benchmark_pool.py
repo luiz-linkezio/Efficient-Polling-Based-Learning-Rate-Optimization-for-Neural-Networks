@@ -264,7 +264,7 @@ def test_the_command_line_starts_one_benchmark_run_per_method_and_seed_on_altern
     assert [env["CUDA_VISIBLE_DEVICES"] for _, env in started] == ["0", "1"]
     assert all(int(env["OMP_NUM_THREADS"]) >= 1 for _, env in started)
     assert (tmp_path / "logs" / "baseline_seed42.log").exists()
-    assert "2 runs to make, 2 at a time on GPU 0, GPU 1" in capsys.readouterr().out
+    assert "2 runs to make over 1 sweep(s), 2 at a time on GPU 0, GPU 1" in capsys.readouterr().out
 
 
 def test_every_run_calibrates_from_the_sweeps_first_seed_not_its_own(
@@ -325,3 +325,46 @@ def test_the_command_line_says_which_runs_did_not_finish(
 
     with pytest.raises(SystemExit, match="1 of 1 runs did not finish: baseline_seed42"):
         pool.main(["--log-dir", str(tmp_path / "logs"), *flags, "--methods", "baseline"])
+
+
+# --- several sweeps in one pool ------------------------------------------------------
+
+
+def test_sweeps_share_one_pool_and_each_ablation_waits_for_its_own_sweep(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two rounds of one dataset: an ablation reads its own round's Efficient
+    Polling run, never the other round's, and the runs the ablations read go first."""
+    from benchmark.rounds import Round, round_experiment
+
+    base = Experiment("covertype", "/nowhere", seeds=(42,), results_dir=tmp_path, device="cpu")
+    sweeps = [
+        pool.Sweep(round_experiment(base, Round(opt, 1.0)), ["--round", f"{opt}:1"], methods)
+        for opt, methods in (
+            ("sgd", ["baseline", "efficient_fixed", "efficient"]),
+            ("adam", ["efficient_random", "efficient"]),
+        )
+    ]
+    started: list[tuple[str, str]] = []
+
+    class Process(Run):
+        def __init__(self, command, env, stdout, stderr) -> None:
+            method = command[command.index("--methods") + 1]
+            round_ = command[command.index("--round") + 1]
+            super().__init__(Task(method, 42), polls=0)
+            started.append((round_, method))
+            folder = tmp_path / "rounds" / f"{round_.split(':')[0]}_lr1"
+            write_record(folder, method, 42)
+
+    monkeypatch.setattr(pool.subprocess, "Popen", Process)
+    monkeypatch.setattr(pool.time, "sleep", lambda seconds: None)
+
+    codes = pool.run_sweeps(sweeps, workers=1)
+
+    assert started[:2] == [("sgd:1", "efficient"), ("adam:1", "efficient")]
+    assert sorted(started[2:]) == [
+        ("adam:1", "efficient_random"),
+        ("sgd:1", "baseline"),
+        ("sgd:1", "efficient_fixed"),
+    ]
+    assert all(code == 0 for code in codes.values()) and len(codes) == 5

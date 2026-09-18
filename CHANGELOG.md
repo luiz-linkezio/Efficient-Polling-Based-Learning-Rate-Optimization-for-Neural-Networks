@@ -39,9 +39,12 @@ four more datasets, the runs on them, and a reorganized repository.
   SPS and Armijo never read a starting rate, so they get a test of their own
   that moves their ceiling instead, on SGD only (`--ceiling RATE`,
   `results/<dataset>/ceilings/`). Nothing has been run in either yet.
-  The rounds are read back as one table per starting rate, the two optimizers
-  of that rate side by side (`rounds.rate_tables`), and as one compact table of
-  all six.
+  The rounds and the ceilings are one study, `python -m benchmark.rounds`,
+  which runs all of it for every dataset asked for in one pool of processes,
+  and reads it back as one table per initial rate: every method on SGD, SPS
+  and Armijo with the rate as ceiling, every method on Adam, each row with the
+  columns of the main table. `slurm/benchmark.sbatch` runs the study as one
+  job, which requeues itself before the partition's time limit.
 - An Initial LR column in every results table, saying what rate each method
   was given: `1e-3, fixed` for the fixed rate, `1e-1 → 0` for cosine
   annealing, `grid 1e-5–1e-1` for the polling methods, the ceiling SPS and
@@ -51,10 +54,9 @@ four more datasets, the runs on them, and a reorganized repository.
 - `python -m benchmark.pool`, which makes a sweep's runs side by side, one
   process per method and seed, four per GPU by default, each told which seed
   the trigger ablations are calibrated from (`--calibration-seed`, since a
-  process that holds one seed would otherwise read its own run), and
-  `slurm/benchmark.sbatch`, which runs one round or one ceiling of one dataset
-  per cluster job and resumes from the runs left when the job is preempted or
-  submitted again. Records are now written aside and moved into place, so a
+  process that holds one seed would otherwise read its own run). Several
+  sweeps can share one pool, and a pool that is stopped, preempted or requeued
+  resumes from the runs left. Records are now written aside and moved into place, so a
   run killed while writing one leaves nothing half-written to be read back.
 
 ### Changed

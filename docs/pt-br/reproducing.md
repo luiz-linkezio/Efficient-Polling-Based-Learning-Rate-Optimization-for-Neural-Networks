@@ -5,8 +5,8 @@
 - [Configuração](#configuração)
 - [Conjuntos de dados](#conjuntos-de-dados)
 - [Execução](#execução): pela linha de comando ou pelo notebook
-- [Rodadas de learning rate](#rodadas-de-learning-rate): todo método no SGD ou no Adam, a partir de uma taxa
-- [Execução num cluster SLURM](#execução-num-cluster-slurm): várias execuções por GPU, uma rodada por job
+- [Rodadas de learning rate](#rodadas-de-learning-rate): todo método no SGD ou no Adam, a partir de uma taxa, uma tabela por taxa
+- [Execução num cluster SLURM](#execução-num-cluster-slurm): o estudo inteiro num job, várias execuções por GPU
 - [Configuração experimental](#configuração-experimental)
 - [Estrutura do repositório](#estrutura-do-repositório)
 
@@ -105,15 +105,25 @@ A tabela principal fixa o otimizador base no SGD e a taxa inicial em `1e-3`, e v
 
 Adam, SPS e Armijo ficam fora das rodadas. O Adam é o otimizador base de metade delas. SPS e Armijo nunca leem uma taxa inicial: o passo de Polyak a sobrescreve no primeiro batch, e a busca em linha começa todo batch pelo teto. O teste deles move esse teto pelas mesmas três taxas, só no SGD, porque as duas fórmulas supõem que o passo segue o gradiente, e o do Adam não segue.
 
-Uma rodada registra em `results/<dataset>/rounds/<otimizador>_lr<taxa>/` e o teste de teto em `results/<dataset>/ceilings/sgd_lr<taxa>/`, com os checkpoints nas mesmas pastas dentro de `models/`, então nenhum dos dois se mistura com a tabela principal e duas rodadas podem rodar ao mesmo tempo. No notebook, as células depois das execuções de taxa inicial varrem uma rodada (`ROUND`) e um teto (`CEILING`) por execução, a seção Figures desenha as figuras de cada rodada em `images/<dataset>/rounds/<otimizador>_lr<taxa>/`, e a seção Test imprime a acurácia de teste de cada método em três tabelas, uma por taxa inicial, com os dois otimizadores da taxa lado a lado, seguidas das seis rodadas num relance e de SPS e Armijo sob cada teto.
+Uma rodada registra em `results/<dataset>/rounds/<otimizador>_lr<taxa>/` e o teste de teto em `results/<dataset>/ceilings/sgd_lr<taxa>/`, com os checkpoints nas mesmas pastas dentro de `models/`, então nenhum dos dois se mistura com a tabela principal.
+
+As seis rodadas e os três tetos são um estudo só, rodado por um comando e lido como **uma tabela por taxa inicial**: cada método das rodadas no SGD, depois SPS e Armijo com aquela taxa como teto, depois cada método das rodadas no Adam, cada linha com as colunas da tabela principal. Uma execução ainda não feita aparece como traço.
+
+```bash
+python -m benchmark.rounds --data-root ~/Datasets                      # todos os datasets
+python -m benchmark.rounds --data-root ~/Datasets --datasets covertype  # um
+python -m benchmark.rounds --datasets covertype --tables-only           # as tabelas do que já foi registrado
+```
+
+O comando roda todas as rodadas e tetos dos datasets pedidos num único pool de processos, vários por GPU (veja abaixo), pula execuções já registradas e imprime as tabelas no fim. No notebook, uma célula depois das execuções de taxa inicial varre o estudo inteiro do `DATASET`, uma execução depois da outra, e imprime as mesmas tabelas; a seção Figures desenha as figuras de cada rodada em `images/<dataset>/rounds/<otimizador>_lr<taxa>/`.
 
 **Custo.** Pelas execuções registradas, uma rodada custa o que a tabela principal custa sem Adam, SPS e Armijo: cerca de 8 h de CIFAR-10 para cinco seeds, e umas 57 h de execução nos cinco datasets, quatro dos quais dividiram a GPU três por vez. Uma rodada pode demorar mais, porque o passo do Adam é mais lento que o do SGD e um método que trava na menor candidata faz poll a cada dois batches. SPS e Armijo somam cerca de 1,5 h de CIFAR-10 por teto, 15 h nos cinco datasets.
 
 ## Execução num cluster SLURM
 
-`python -m benchmark.pool` aceita as flags de `python -m benchmark` e faz as execuções lado a lado, um processo por `(método, seed)`, quatro por GPU a menos que `--workers` diga outra coisa. Cada processo é o `python -m benchmark` daquele método e seed, então os registros são os que uma varredura sequencial escreveria, menos o `s_per_epoch`: execuções que dividem uma GPU atrasam umas às outras. Execuções com registro são puladas, as ablações calibradas esperam a execução do Efficient Polling na primeira seed, e cada execução grava seu log em `logs/`, numa pasta que espelha a do seu registro em `results/`.
+O `python -m benchmark.rounds` acima, e o `python -m benchmark.pool` para uma varredura avulsa (ele aceita as flags de `python -m benchmark`), fazem as execuções lado a lado, um processo por `(método, seed)`, quatro por GPU a menos que `--workers` diga outra coisa. Cada processo é o `python -m benchmark` daquele método e seed, então os registros são os que uma varredura sequencial escreveria, menos o `s_per_epoch`: execuções que dividem uma GPU atrasam umas às outras. Execuções com registro são puladas, as ablações calibradas esperam a execução do Efficient Polling da própria varredura na primeira seed, e cada execução grava seu log em `logs/`, numa pasta que espelha a do seu registro em `results/`.
 
-`slurm/benchmark.sbatch` roda uma rodada, ou um teto, de um dataset por job. No nó de login, clone o repositório e crie o ambiente que o job ativa:
+`slurm/benchmark.sbatch` roda o estudo inteiro, todas as rodadas e tetos de todos os datasets, como um job só. No nó de login, clone o repositório e crie o ambiente que o job ativa:
 
 ```bash
 git clone --branch dev https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks.git
@@ -124,23 +134,22 @@ mkdir -p logs
 
 Serve qualquer Python 3.10 ou mais novo, desde que os nós de computação enxerguem o interpretador que criou o ambiente. O `uv` monta o mesmo ambiente mais rápido, mas ele tranca o cache e o ambiente em que instala, e uma trava de arquivo fica pendurada para sempre num home montado por NFS com o serviço de travas quebrado, que é o que aconteceu no Apuana em setembro de 2026. O `pip` não usa esse tipo de trava.
 
-O job lê os datasets de `~/Datasets/`, nas pastas que o `DATA_DIRS` do notebook nomeia (`DATA_ROOT` ou `DATA_DIR` apontam para outro lugar). De uma máquina que os tenha:
+O job lê os datasets de `~/Datasets/`, nas pastas que o `DATA_DIRS` do notebook nomeia (`DATA_ROOT` aponta para outro lugar). De uma máquina que os tenha:
 
 ```bash
 rsync -av ~/Datasets/{cifar-10-python,cifar-100-python,MNIST,fashion-mnist,covertype} <usuário>@<nó de login>:Datasets/
 ```
 
-Depois, submeta um job por rodada e acompanhe:
+Depois, submeta uma vez e acompanhe:
 
 ```bash
-DATASET=covertype ROUND=sgd:1 sbatch slurm/benchmark.sbatch
-DATASET=cifar10 ROUND=adam:1e-7 sbatch --nodelist=<nó> slurm/benchmark.sbatch
-DATASET=mnist CEILING=1e-3 sbatch slurm/benchmark.sbatch
+sbatch --nodelist=<nó> slurm/benchmark.sbatch                        # todos os datasets
+DATASETS="covertype cifar10" sbatch --nodelist=<nó> slurm/benchmark.sbatch
 squeue -u $USER
 tail -f logs/polling-benchmark-<id do job>.out
 ```
 
-O job pede duas GPUs, 16 CPUs, 64 GB e um dia na `short-simple`, os limites do cluster para o qual foi escrito, o Apuana do CIn/UFPE, onde as GPUs não têm tipo no SLURM e o nó se escolhe com `--nodelist`. Opções na linha de comando do `sbatch` sobrepõem as do arquivo. Um job preemptado volta para a fila e retoma das execuções que não tinham terminado, e um job submetido de novo depois de estourar o tempo ou ser cancelado faz o mesmo. Os registros são escritos no clone do cluster; traga-os de volta com
+O job pede duas GPUs, 16 CPUs, 64 GB e dois dias na `short-simple`, os limites do cluster para o qual foi escrito, o Apuana do CIn/UFPE, onde as GPUs não têm tipo no SLURM e o nó se escolhe com `--nodelist`. Opções na linha de comando do `sbatch` sobrepõem as do arquivo. O estudo não precisa caber em dois dias: quinze minutos antes do limite o job volta sozinho para a fila, e cada início continua das execuções que não tinham terminado, como faz um job preemptado. Ele termina imprimindo uma tabela por taxa inicial de cada dataset. Os registros são escritos no clone do cluster; traga-os de volta com
 
 ```bash
 rsync -av <usuário>@<nó de login>:Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/results/ results/
@@ -172,10 +181,10 @@ rsync -av <usuário>@<nó de login>:Efficient-Polling-Based-Learning-Rate-Optimi
 │   ├── models.py              # SimpleCNN e SimpleMLP
 │   ├── methods.py             # as treze configurações e seus hiperparâmetros
 │   ├── sweep.py               # roda configurações sobre seeds, registra e relê as execuções
-│   ├── rounds.py              # as rodadas de learning rate e o teste de teto de SPS e Armijo
+│   ├── rounds.py              # o estudo de learning rate: rodadas, tetos, uma tabela por taxa inicial
 │   ├── pool.py                # execuções lado a lado, várias por GPU
 │   └── plots.py               # as figuras, desenhadas a partir dos registros
-├── slurm/benchmark.sbatch     # uma rodada ou teto de um dataset por job do cluster
+├── slurm/benchmark.sbatch     # o estudo de learning rate inteiro como um job do cluster
 ├── notebooks/benchmark.ipynb  # conduz o pacote benchmark, commitado sem saídas
 ├── tests/                     # suíte pytest do pacote e do benchmark
 ├── results/<dataset>/         # um JSON por (método, seed); rounds/ e ceilings/ guardam as rodadas

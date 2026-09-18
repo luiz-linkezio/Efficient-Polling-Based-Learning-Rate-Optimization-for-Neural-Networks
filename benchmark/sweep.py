@@ -50,7 +50,9 @@ __all__ = [
     "load_initial_lr_runs",
     "load_runs",
     "record_label",
+    "markdown_table",
     "results_table",
+    "table_cells",
     "run_setting",
     "summarize",
 ]
@@ -371,6 +373,39 @@ def summarize(values: list[float]) -> tuple[float, float]:
     return statistics.fmean(values), statistics.stdev(values)
 
 
+# The columns a results table gives every method, after its name.
+TABLE_COLUMNS = ("Best Val", "Test Acc", "Test Loss", "Polled", "Steps", "s/Epoch", "Seeds")
+
+
+def table_cells(runs: list[dict[str, Any]]) -> list[str]:
+    """One method's :data:`TABLE_COLUMNS`, mean ± sample stdev over its runs.
+
+    A method with no runs yet gets a dash in every column.
+    """
+    if not runs:
+        return ["—"] * len(TABLE_COLUMNS)
+    val_m, val_s = summarize([r["best_val"] for r in runs])
+    acc_m, acc_s = summarize([r["test_acc"] for r in runs])
+    loss_m, loss_s = summarize([r["test_loss"] for r in runs])
+    sec_m, sec_s = summarize([r["s_per_epoch"] for r in runs])
+    poll_m, _ = summarize([r["poll_fraction"] for r in runs])
+    steps_m, _ = summarize([float(r["steps"]) for r in runs])
+    return [
+        f"{val_m:.2%} ± {val_s:.2%}",
+        f"{acc_m:.2%} ± {acc_s:.2%}",
+        f"{loss_m:.4f} ± {loss_s:.4f}",
+        f"{poll_m:.2%}" if poll_m else "n/a",
+        f"{steps_m:,.0f}",
+        f"{sec_m:.2f} ± {sec_s:.2f}",
+        str(len(runs)),
+    ]
+
+
+def markdown_table(header: list[str], rows: list[list[str]]) -> str:
+    lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
+    return "\n".join([*lines, *("| " + " | ".join(row) + " |" for row in rows)])
+
+
 def results_table(
     runs_per_method: dict[str, list[dict[str, Any]]], hyperparameters: Hyperparameters
 ) -> str:
@@ -382,28 +417,13 @@ def results_table(
     Initial LR column reads them, since a record keeps its rate but not where a
     schedule or a polling grid started from it.
     """
-    lines = [
-        "| Method | Initial LR | Best Val | Test Acc | Test Loss "
-        "| Polled | Steps | s/Epoch | Seeds |",
-        "|---|---|---|---|---|---|---|---|---|",
+    rows = [
+        [
+            record_label(method, runs[0]).strip(),
+            initial_lr(method, hyperparameters),
+            *table_cells(runs),
+        ]
+        for method, runs in runs_per_method.items()
+        if runs
     ]
-    for method, runs in runs_per_method.items():
-        if not runs:
-            continue
-        val_m, val_s = summarize([r["best_val"] for r in runs])
-        acc_m, acc_s = summarize([r["test_acc"] for r in runs])
-        loss_m, loss_s = summarize([r["test_loss"] for r in runs])
-        sec_m, sec_s = summarize([r["s_per_epoch"] for r in runs])
-        poll_m, _ = summarize([r["poll_fraction"] for r in runs])
-        steps_m, _ = summarize([float(r["steps"]) for r in runs])
-        polled = f"{poll_m:.2%}" if poll_m else "n/a"
-        lines.append(
-            f"| {record_label(method, runs[0]).strip()} "
-            f"| {initial_lr(method, hyperparameters)} "
-            f"| {val_m:.2%} ± {val_s:.2%} "
-            f"| {acc_m:.2%} ± {acc_s:.2%} "
-            f"| {loss_m:.4f} ± {loss_s:.4f} "
-            f"| {polled} | {steps_m:,.0f} "
-            f"| {sec_m:.2f} ± {sec_s:.2f} | {len(runs)} |"
-        )
-    return "\n".join(lines)
+    return markdown_table(["Method", "Initial LR", *TABLE_COLUMNS], rows)
