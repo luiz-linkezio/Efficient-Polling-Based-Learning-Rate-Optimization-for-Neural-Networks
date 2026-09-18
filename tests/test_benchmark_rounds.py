@@ -35,11 +35,14 @@ from benchmark.rounds import (
     ROUNDS,
     Round,
     ceiling_experiment,
-    ceilings_table,
+    rate_table,
     rate_tables,
     round_experiment,
     round_hyperparameters,
-    rounds_table,
+    study_sweeps,
+)
+from benchmark.rounds import (
+    main as study_main,
 )
 from benchmark.sweep import REPO_DIR, Experiment, results_table
 from efficient_polling_lr_scheduler import (
@@ -375,52 +378,121 @@ def test_the_ceiling_table_says_the_ceiling_sps_and_armijo_were_held_to() -> Non
     ]
 
 
-def test_the_summary_gives_each_round_a_column_and_marks_what_is_missing(tmp_path: Path) -> None:
-    experiment = Experiment("mnist", "/nowhere", seeds=(42, 43), results_dir=tmp_path)
-    sgd, adam = Round("sgd", 1e-1), Round("adam", 1e-1)
+def test_an_initial_rate_gets_one_table_of_every_method_on_both_optimizers(
+    tmp_path: Path,
+) -> None:
+    experiment = Experiment("covertype", "/nowhere", seeds=(42, 43), results_dir=tmp_path)
+    sgd, adam = Round("sgd", 1.0), Round("adam", 1.0)
     for seed, acc in ((42, 0.8), (43, 0.9)):
         path = round_experiment(experiment, sgd).result_path("efficient", seed)
-        write(path, record("efficient", seed, test_acc=acc))
-    path = round_experiment(experiment, adam).result_path("efficient", 42)
-    write(path, record("efficient", 42, test_acc=0.5, optimizer="adam"))
+        write(path, record("efficient", seed, lr0=1.0, test_acc=acc))
+    path = round_experiment(experiment, adam).result_path("baseline", 42)
+    write(path, record("baseline", 42, optimizer="adam", lr0=1.0, test_acc=0.5))
+    path = ceiling_experiment(experiment, 1.0).result_path("sps", 42)
+    write(path, record("sps", 42, lr0=1.0, test_acc=0.6))
 
-    lines = rounds_table(experiment, [sgd, adam], ["baseline", "efficient"]).splitlines()
+    lines = rate_table(experiment, 1.0).splitlines()
+    rows = {tuple(line.split(" | ")[:2]): line for line in lines[2:]}
 
-    assert lines[0] == "| Method | SGD 1e-1 | Adam 1e-1 |"
-    assert lines[2] == "| Fixed rate | — | — |"
-    assert lines[3] == "| Efficient Polling (ours) | 85.00% ± 7.07% | 50.00% ± 0.00% (1/2) |"
+    assert lines[0].startswith("| Method | Optimizer | Best Val | Test Acc |")
+    assert len(rows) == 2 * len(ROUND_METHODS) + len(CEILING_METHODS)
+    assert "| 85.00% ± 7.07% |" in rows[("| Efficient Polling (ours)", "SGD")]
+    assert rows[("| Efficient Polling (ours)", "SGD")].endswith("| 2 |")
+    assert "| 50.00% ± 0.00% |" in rows[("| Fixed rate", "Adam")]
+    assert "| 60.00% ± 0.00% |" in rows[("| SPS (Polyak), ceiling 1", "SGD")]
+    assert rows[("| Fixed rate", "SGD")].endswith("| — | — | — | — | — | — | — |")
 
 
-def test_each_starting_rate_gets_a_table_of_its_two_rounds(tmp_path: Path) -> None:
-    folder = tmp_path / "rounds"
-    write(
-        folder / "sgd_lr1" / "baseline_seed42.json",
-        record("baseline", 42, lr0=1.0, test_acc=0.7397),
+def test_the_rows_go_sgd_then_sps_and_armijo_then_adam(tmp_path: Path) -> None:
+    experiment = Experiment("mnist", "/nowhere", results_dir=tmp_path)
+
+    rows = rate_table(experiment, 1e-7).splitlines()[2:]
+    optimizers = [row.split(" | ")[1] for row in rows]
+    names = [row.split(" | ")[0].lstrip("| ") for row in rows]
+
+    assert optimizers == ["SGD"] * (len(ROUND_METHODS) + 2) + ["Adam"] * len(ROUND_METHODS)
+    assert names[len(ROUND_METHODS) :][:2] == [
+        "SPS (Polyak), ceiling 1e-7",
+        "Armijo line search, ceiling 1e-7",
+    ]
+
+
+def test_there_is_one_table_per_initial_rate(tmp_path: Path) -> None:
+    experiment = Experiment("covertype", "/nowhere", results_dir=tmp_path)
+
+    tables = rate_tables(experiment)
+
+    headings = [line for line in tables.splitlines() if line.startswith("###")]
+    assert headings == [f"### Covertype, initial LR {rate_text(rate)}" for rate in RATES]
+
+
+# --- the study as one job -----------------------------------------------------------
+
+
+def test_the_study_is_every_round_and_every_ceiling_of_a_dataset() -> None:
+    experiment = Experiment("covertype", "/data/covertype", seeds=(42, 43), device="cuda")
+
+    sweeps = study_sweeps(experiment)
+
+    assert len(sweeps) == len(ROUNDS) + len(CEILINGS)
+    assert [s.experiment.results_dir for s in sweeps] == [
+        *(round_experiment(experiment, r).results_dir for r in ROUNDS),
+        *(ceiling_experiment(experiment, c).results_dir for c in CEILINGS),
+    ]
+    # each sweep's flags rebuild, in a process of its own, the experiment it stands for
+    for sweep in sweeps:
+        args = parse_args(list(sweep.flags))
+        rebuilt = build_experiment(args)
+        assert rebuilt.results_dir == sweep.experiment.results_dir
+        assert rebuilt.hyperparameters == sweep.experiment.hyperparameters
+        assert (args.seeds, args.data_dir, args.device) == ([42, 43], "/data/covertype", "cuda")
+        assert list(sweep.methods) == list(args.methods)
+
+
+def test_the_study_runs_every_dataset_in_one_pool_and_prints_a_table_per_rate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No run trains: the pool is handed the sweeps and reports them all done."""
+    from benchmark import pool
+
+    for folder in ("covertype", "MNIST"):
+        (tmp_path / folder).mkdir()
+    handed: list = []
+
+    def run_sweeps(sweeps, workers=None):
+        handed.extend(sweeps)
+        return {}
+
+    monkeypatch.setattr(pool, "run_sweeps", run_sweeps)
+
+    study_main(
+        ["--data-root", str(tmp_path), "--datasets", "covertype", "mnist", "--device", "cpu"]
     )
-    write(
-        folder / "adam_lr1" / "baseline_seed42.json",
-        record("baseline", 42, optimizer="adam", lr0=1.0, test_acc=0.5),
-    )
-    experiment = Experiment("covertype", "/nowhere", seeds=(42,), results_dir=tmp_path)
 
-    tables = rate_tables(experiment, methods=("baseline",))
-
-    assert "### Covertype, starting rate 1\n\n| Method | Initial LR | SGD | Adam |" in tables
-    assert "| Fixed rate | 1, fixed | 73.97% ± 0.00% | 50.00% ± 0.00% |" in tables
-    assert "| Fixed rate | 1e-7, fixed | — | — |" in tables
-    assert "### Covertype, starting rate 1e-3\n" in tables
-    assert tables.count("| Fixed rate |") == len(RATES)
+    per_dataset = len(ROUNDS) + len(CEILINGS)
+    assert len(handed) == 2 * per_dataset
+    assert {s.experiment.spec.key for s in handed[:per_dataset]} == {"covertype"}
+    assert handed[0].experiment.data_dir == tmp_path / "covertype"
+    output = capsys.readouterr().out
+    assert output.count("### Covertype, initial LR") == len(RATES)
+    assert output.count("### MNIST, initial LR") == len(RATES)
 
 
-def test_the_ceiling_summary_gives_each_ceiling_a_column(tmp_path: Path) -> None:
-    experiment = Experiment("cifar10", "/nowhere", seeds=(42,), results_dir=tmp_path)
-    path = ceiling_experiment(experiment, 1e-3).result_path("sps", 42)
-    write(path, record("sps", 42, test_acc=0.6, lr0=1e-3))
+def test_the_study_refuses_a_dataset_it_cannot_find(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit):
+        study_main(["--data-root", str(tmp_path), "--datasets", "covertype"])
 
-    lines = ceilings_table(experiment, [1e-1, 1e-3]).splitlines()
+    assert "no dataset at" in capsys.readouterr().err
 
-    assert lines[0] == "| Method | ceiling 1e-1 | ceiling 1e-3 |"
-    assert lines[2] == "| SPS (Polyak) | — | 60.00% ± 0.00% |"
+
+def test_the_tables_can_be_printed_without_running_anything(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    study_main(["--data-root", str(tmp_path), "--datasets", "cifar100", "--tables-only"])
+
+    assert capsys.readouterr().out.count("### CIFAR-100, initial LR") == len(RATES)
 
 
 # --- command line -------------------------------------------------------------------

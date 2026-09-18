@@ -29,24 +29,38 @@ step follows the gradient.
 Records go to ``results/<dataset>/rounds/<optimizer>_lr<rate>/`` and
 ``results/<dataset>/ceilings/sgd_lr<rate>/``, checkpoints to the same folders
 under ``models/``.
+
+The rounds and the ceilings are one study, run as one command, all of it in a
+single pool of processes over the GPUs, and read back as one table per
+starting rate:
+
+    python -m benchmark.rounds --data-root ~/Datasets
+    python -m benchmark.rounds --data-root ~/Datasets --datasets covertype cifar10
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import argparse
+import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import TYPE_CHECKING
 
+from .datasets import DATASETS
 from .methods import (
     LABELS,
     METHODS,
     OPTIMIZERS,
     SGD_ONLY,
     Hyperparameters,
-    initial_lr,
     optimizer_name,
     rate_text,
 )
-from .sweep import Experiment, load_runs, summarize
+from .sweep import TABLE_COLUMNS, Experiment, load_runs, markdown_table, table_cells
+
+if TYPE_CHECKING:
+    from .pool import Sweep
 
 __all__ = [
     "CEILINGS",
@@ -58,12 +72,13 @@ __all__ = [
     "Round",
     "ceiling_experiment",
     "ceiling_hyperparameters",
-    "ceilings_table",
+    "DATA_FOLDERS",
+    "main",
     "rate_table",
     "rate_tables",
     "round_experiment",
     "round_hyperparameters",
-    "rounds_table",
+    "study_sweeps",
 ]
 
 # Very high, middle and very low: the paper's 1e-3, three decades above and four below.
@@ -149,97 +164,137 @@ def ceiling_experiment(experiment: Experiment, ceiling: float) -> Experiment:
     )
 
 
-def rate_table(
-    experiment: Experiment,
-    rate: float,
-    optimizers: Sequence[str] = tuple(OPTIMIZERS),
-    methods: Sequence[str] = ROUND_METHODS,
-) -> str:
-    """Test accuracy of every method started at one rate, as Markdown: one column per optimizer.
+def rate_table(experiment: Experiment, rate: float) -> str:
+    """Every run that started from ``rate``, as Markdown, one row per method and optimizer.
 
-    The Initial LR column says what each method was given at that rate, which
-    is the same on either optimizer.
+    The rows are each round method on SGD, then SPS and Armijo with the rate as
+    their ceiling (on SGD, the only optimizer they take), then each round method
+    on Adam. A method not run yet has a dash in every column.
     """
-    columns = [
-        (optimizer_name(optimizer), round_experiment(experiment, Round(optimizer, rate)))
-        for optimizer in optimizers
+    blocks = [
+        ("sgd", round_experiment(experiment, Round("sgd", rate)), ROUND_METHODS, ""),
+        (
+            "sgd",
+            ceiling_experiment(experiment, rate),
+            CEILING_METHODS,
+            f", ceiling {rate_text(rate)}",
+        ),
+        *(
+            (optimizer, round_experiment(experiment, Round(optimizer, rate)), ROUND_METHODS, "")
+            for optimizer in OPTIMIZERS
+            if optimizer != "sgd"
+        ),
     ]
-    at_rate = columns[0][1].hyperparameters
-    initial = {method: initial_lr(method, at_rate) for method in methods}
-    return _accuracy_table(columns, methods, ROUND_LABELS, len(experiment.seeds), initial)
+    rows = []
+    for optimizer, variant, methods, suffix in blocks:
+        runs = load_runs(variant.results_dir)
+        for method in methods:
+            name = ROUND_LABELS.get(method, LABELS[method].strip()) + suffix
+            rows.append([name, optimizer_name(optimizer), *table_cells(runs.get(method, []))])
+    return markdown_table(["Method", "Optimizer", *TABLE_COLUMNS], rows)
 
 
-def rate_tables(
-    experiment: Experiment,
-    rates: Sequence[float] = RATES,
-    methods: Sequence[str] = ROUND_METHODS,
-) -> str:
-    """One table per starting rate, each headed by the dataset and the rate.
-
-    A rate is what a round asks of a method, so this is the reading that keeps
-    the two rounds of a rate together and the three rates apart.
-    """
+def rate_tables(experiment: Experiment, rates: Sequence[float] = RATES) -> str:
+    """One :func:`rate_table` per starting rate, each headed by the dataset and the rate."""
     return "\n\n".join(
-        f"### {experiment.spec.name}, starting rate {rate_text(rate)}\n\n"
-        + rate_table(experiment, rate, methods=methods)
+        f"### {experiment.spec.name}, initial LR {rate_text(rate)}\n\n"
+        + rate_table(experiment, rate)
         for rate in rates
     )
 
 
-def rounds_table(
-    experiment: Experiment,
-    rounds: Sequence[Round] = ROUNDS,
-    methods: Sequence[str] = ROUND_METHODS,
-) -> str:
-    """Test accuracy of every method in every round, as Markdown: one column per round.
-
-    The six rounds at a glance; :func:`rate_tables` splits them by starting rate.
-    """
-    columns = [(round_.title, round_experiment(experiment, round_)) for round_ in rounds]
-    return _accuracy_table(columns, methods, ROUND_LABELS, len(experiment.seeds))
+# Where each dataset sits under a data root: the layout docs/reproducing.md
+# describes, and the one the notebook's DATA_DIRS points at.
+DATA_FOLDERS = {
+    "cifar10": "cifar-10-python/cifar-10-batches-py",
+    "cifar100": "cifar-100-python",
+    "mnist": "MNIST",
+    "fashion_mnist": "fashion-mnist",
+    "covertype": "covertype",
+}
 
 
-def ceilings_table(
-    experiment: Experiment,
-    ceilings: Sequence[float] = CEILINGS,
-    methods: Sequence[str] = CEILING_METHODS,
-) -> str:
-    """Test accuracy of SPS and Armijo under every ceiling, as Markdown: one column per ceiling."""
-    columns = [(f"ceiling {rate_text(c)}", ceiling_experiment(experiment, c)) for c in ceilings]
-    labels = {method: LABELS[method].strip() for method in methods}
-    return _accuracy_table(columns, methods, labels, len(experiment.seeds))
+def study_sweeps(experiment: Experiment) -> list[Sweep]:
+    """Every round and ceiling of ``experiment``'s dataset, as sweeps one pool can run."""
+    from .pool import Sweep  # the pool imports the command line, which imports this module
 
-
-def _accuracy_table(
-    columns: Sequence[tuple[str, Experiment]],
-    methods: Sequence[str],
-    labels: Mapping[str, str],
-    seeds: int,
-    initial: Mapping[str, str] | None = None,
-) -> str:
-    """Mean ± sample deviation of the test accuracy over the seeds recorded so far.
-
-    A cell short of the experiment's seeds says how many it has, and a method a
-    column has not run yet is a dash.
-    """
-    recorded = [load_runs(variant.results_dir) for _, variant in columns]
-    extra = [] if initial is None else ["Initial LR"]
-    lines = [
-        "| " + " | ".join(["Method", *extra, *(title for title, _ in columns)]) + " |",
-        "|---|" + "---|" * (len(extra) + len(columns)),
+    seeds = [str(seed) for seed in experiment.seeds]
+    common = ["--dataset", experiment.spec.key, "--data-dir", str(experiment.data_dir)]
+    common += ["--seeds", *seeds, "--device", str(experiment.device)]
+    sweeps = [
+        Sweep(
+            round_experiment(experiment, round_),
+            [*common, "--round", f"{round_.optimizer}:{round_.lr!r}"],
+            ROUND_METHODS,
+        )
+        for round_ in ROUNDS
     ]
-    for method in methods:
-        cells = []
-        for runs_per_method in recorded:
-            runs = runs_per_method.get(method, [])
-            if not runs:
-                cells.append("—")
-                continue
-            mean, deviation = summarize([r["test_acc"] for r in runs])
-            cell = f"{mean:.2%} ± {deviation:.2%}"
-            if len(runs) < seeds:
-                cell += f" ({len(runs)}/{seeds})"
-            cells.append(cell)
-        row = [labels.get(method, method), *([] if initial is None else [initial[method]]), *cells]
-        lines.append("| " + " | ".join(row) + " |")
-    return "\n".join(lines)
+    sweeps += [
+        Sweep(
+            ceiling_experiment(experiment, ceiling),
+            [*common, "--ceiling", repr(ceiling)],
+            CEILING_METHODS,
+        )
+        for ceiling in CEILINGS
+    ]
+    return sweeps
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Run the whole study, every round and ceiling of every dataset asked for, in one pool."""
+    from .pool import RUNS_PER_GPU, run_sweeps, unfinished
+
+    parser = argparse.ArgumentParser(
+        prog="python -m benchmark.rounds",
+        description="Every learning-rate round and SPS/Armijo ceiling, as one job, "
+        "read back as one table per initial LR.",
+    )
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        default=Path.home() / "Datasets",
+        help="folder holding the datasets, laid out as "
+        + ", ".join(f"{key}: {folder}" for key, folder in DATA_FOLDERS.items())
+        + " (default: ~/Datasets)",
+    )
+    parser.add_argument(
+        "--datasets", nargs="+", choices=list(DATASETS), default=list(DATASETS), metavar="DATASET"
+    )
+    parser.add_argument("--seeds", nargs="+", type=int, default=[42, 43, 44, 45, 46])
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help=f"runs at a time (default: {RUNS_PER_GPU} per GPU, or 1 without one)",
+    )
+    parser.add_argument("--device", default=None, help="default: cuda when there is one")
+    parser.add_argument(
+        "--tables-only",
+        action="store_true",
+        help="print the tables of what is recorded, and run nothing",
+    )
+    args = parser.parse_args(argv)
+    if args.workers is not None and args.workers < 1:
+        parser.error(f"--workers must be at least 1, got {args.workers}")
+
+    experiments = [
+        Experiment(key, args.data_root / DATA_FOLDERS[key], seeds=args.seeds, device=args.device)
+        for key in args.datasets
+    ]
+    message = None
+    if not args.tables_only:
+        missing = [str(e.data_dir) for e in experiments if not Path(e.data_dir).is_dir()]
+        if missing:
+            parser.error(f"no dataset at {', '.join(missing)}")
+        sweeps = [sweep for experiment in experiments for sweep in study_sweeps(experiment)]
+        codes = run_sweeps(sweeps, args.workers)
+        message = unfinished(codes, sweeps)
+
+    for experiment in experiments:
+        print(f"\n{rate_tables(experiment)}")
+    if message:
+        sys.exit(message)
+
+
+if __name__ == "__main__":
+    main()

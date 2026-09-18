@@ -5,8 +5,8 @@
 - [Setup](#setup)
 - [Datasets](#datasets)
 - [Running](#running): from the command line or from the notebook
-- [Learning-rate rounds](#learning-rate-rounds): every method on SGD or on Adam, from one rate
-- [Running on a SLURM cluster](#running-on-a-slurm-cluster): several runs per GPU, one round per job
+- [Learning-rate rounds](#learning-rate-rounds): every method on SGD or on Adam, from one rate, one table per rate
+- [Running on a SLURM cluster](#running-on-a-slurm-cluster): the whole study in one job, several runs per GPU
 - [Experimental setup](#experimental-setup)
 - [Repository layout](#repository-layout)
 
@@ -105,15 +105,25 @@ The main table fixes the base optimizer at SGD and the starting rate at `1e-3`, 
 
 Adam, SPS and Armijo sit the rounds out. Adam is the base optimizer of half of them. SPS and Armijo never read a starting rate: the Polyak step overwrites it on the first batch, and the line search starts every batch from its ceiling. Their own test moves that ceiling through the same three rates instead, on SGD only, because both formulas assume the step follows the gradient, which Adam's does not.
 
-A round records into `results/<dataset>/rounds/<optimizer>_lr<rate>/` and the ceiling test into `results/<dataset>/ceilings/sgd_lr<rate>/`, with the checkpoints in the same folders under `models/`, so neither mixes with the main table and two rounds can run at once. In the notebook, the cells after the initial-rate runs sweep one round (`ROUND`) and one ceiling (`CEILING`) per run, the Figures section draws each round's figures into `images/<dataset>/rounds/<optimizer>_lr<rate>/`, and the Test section prints the test accuracy of every method as three tables, one per starting rate, with the round's two optimizers side by side, followed by the six rounds at a glance and by SPS and Armijo under every ceiling.
+A round records into `results/<dataset>/rounds/<optimizer>_lr<rate>/` and the ceiling test into `results/<dataset>/ceilings/sgd_lr<rate>/`, with the checkpoints in the same folders under `models/`, so neither mixes with the main table.
+
+The six rounds and the three ceilings are one study, run by one command and read back as **one table per initial rate**: every round method on SGD, then SPS and Armijo with that rate as their ceiling, then every round method on Adam, each row with the columns of the main table. A run not made yet shows as a dash.
+
+```bash
+python -m benchmark.rounds --data-root ~/Datasets                      # every dataset
+python -m benchmark.rounds --data-root ~/Datasets --datasets covertype  # one
+python -m benchmark.rounds --datasets covertype --tables-only           # the tables of what is recorded
+```
+
+The command runs every round and ceiling of the datasets asked for in one pool of processes, several per GPU (see below), skips runs already recorded, and prints the tables at the end. In the notebook, one cell after the initial-rate runs sweeps the whole study for `DATASET`, one run after another, and prints the same tables; the Figures section draws each round's figures into `images/<dataset>/rounds/<optimizer>_lr<rate>/`.
 
 **Cost.** Going by the recorded runs, a round costs what the main table costs without Adam, SPS and Armijo: about 8 h of CIFAR-10 for five seeds, and some 57 h of run time over the five datasets, four of which shared the GPU three at a time. A round can take longer, since Adam's step is slower than SGD's and a method that stalls at its smallest candidate polls every other batch. SPS and Armijo add about 1.5 h of CIFAR-10 per ceiling, 15 h over the five datasets.
 
 ## Running on a SLURM cluster
 
-`python -m benchmark.pool` takes the flags of `python -m benchmark` and makes the runs side by side, one process per `(method, seed)`, four per GPU unless `--workers` says otherwise. Each process is `python -m benchmark` for that method and seed, so the records are the ones a sequential sweep would write, except for `s_per_epoch`: runs that share a GPU slow each other down. Runs with a record are skipped, calibrated ablations wait for Efficient Polling's run on the first seed, and each run logs to `logs/`, in a folder that mirrors the one its record goes to under `results/`.
+`python -m benchmark.rounds` above, and `python -m benchmark.pool` for any single sweep (it takes the flags of `python -m benchmark`), make the runs side by side, one process per `(method, seed)`, four per GPU unless `--workers` says otherwise. Each process is `python -m benchmark` for that method and seed, so the records are the ones a sequential sweep would write, except for `s_per_epoch`: runs that share a GPU slow each other down. Runs with a record are skipped, calibrated ablations wait for their own sweep's Efficient Polling run on the first seed, and each run logs to `logs/`, in a folder that mirrors the one its record goes to under `results/`.
 
-`slurm/benchmark.sbatch` runs one round, or one ceiling, of one dataset per job. On the login node, clone the repository and create the environment the job activates:
+`slurm/benchmark.sbatch` runs the whole study, every round and ceiling of every dataset, as one job. On the login node, clone the repository and create the environment the job activates:
 
 ```bash
 git clone --branch dev https://github.com/luiz-linkezio/Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks.git
@@ -124,23 +134,22 @@ mkdir -p logs
 
 Any Python 3.10 or newer works, as long as the compute nodes see the interpreter it was created from. `uv` builds the same environment faster, but it locks its cache and the environment it installs into, and a file lock hangs for good on a home directory mounted over NFS with a broken lock daemon, which is what Apuana's did in September 2026. `pip` takes no such lock.
 
-The job reads the datasets from `~/Datasets/`, in the folders the notebook's `DATA_DIRS` names (`DATA_ROOT` or `DATA_DIR` point it elsewhere). From a machine that has them:
+The job reads the datasets from `~/Datasets/`, in the folders the notebook's `DATA_DIRS` names (`DATA_ROOT` points it elsewhere). From a machine that has them:
 
 ```bash
 rsync -av ~/Datasets/{cifar-10-python,cifar-100-python,MNIST,fashion-mnist,covertype} <user>@<login node>:Datasets/
 ```
 
-Then submit one job per round, and follow it:
+Then submit it once, and follow it:
 
 ```bash
-DATASET=covertype ROUND=sgd:1 sbatch slurm/benchmark.sbatch
-DATASET=cifar10 ROUND=adam:1e-7 sbatch --nodelist=<node> slurm/benchmark.sbatch
-DATASET=mnist CEILING=1e-3 sbatch slurm/benchmark.sbatch
+sbatch --nodelist=<node> slurm/benchmark.sbatch                      # every dataset
+DATASETS="covertype cifar10" sbatch --nodelist=<node> slurm/benchmark.sbatch
 squeue -u $USER
 tail -f logs/polling-benchmark-<job id>.out
 ```
 
-The job asks for two GPUs, 16 CPUs, 64 GB and a day on `short-simple`, the limits of the cluster it was written for, Apuana at CIn/UFPE, where the GPUs are untyped in SLURM and a node is picked with `--nodelist`. Options on the `sbatch` command line override the file's. A preempted job is requeued and resumes from the runs that had not finished, and a job submitted again after a timeout or a cancel does the same. The records are written to the clone on the cluster; bring them back with
+The job asks for two GPUs, 16 CPUs, 64 GB and two days on `short-simple`, the limits of the cluster it was written for, Apuana at CIn/UFPE, where the GPUs are untyped in SLURM and a node is picked with `--nodelist`. Options on the `sbatch` command line override the file's. The study does not have to fit in two days: fifteen minutes before the limit the job requeues itself, and each start carries on from the runs that had not finished, as a preempted job does. It ends by printing one table per initial rate of each dataset. The records are written to the clone on the cluster; bring them back with
 
 ```bash
 rsync -av <user>@<login node>:Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/results/ results/
@@ -172,10 +181,10 @@ rsync -av <user>@<login node>:Efficient-Polling-Based-Learning-Rate-Optimization
 │   ├── models.py              # SimpleCNN and SimpleMLP
 │   ├── methods.py             # the thirteen configurations and their hyperparameters
 │   ├── sweep.py               # runs configurations over seeds, records and reads back runs
-│   ├── rounds.py              # the learning-rate rounds and the ceiling test of SPS and Armijo
+│   ├── rounds.py              # the learning-rate study: rounds, ceilings, one table per initial rate
 │   ├── pool.py                # runs side by side, several per GPU
 │   └── plots.py               # the figures, drawn from the records
-├── slurm/benchmark.sbatch     # one round or ceiling of one dataset per cluster job
+├── slurm/benchmark.sbatch     # the whole learning-rate study as one cluster job
 ├── notebooks/benchmark.ipynb  # drives the benchmark package, committed without outputs
 ├── tests/                     # pytest suite for the package and the benchmark
 ├── results/<dataset>/         # one JSON per (method, seed); rounds/ and ceilings/ hold the rounds

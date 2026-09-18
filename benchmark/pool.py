@@ -1,4 +1,4 @@
-"""Run a sweep's runs side by side: one process per (method, seed), spread over the GPUs.
+"""Run sweeps side by side: one process per (method, seed), spread over the GPUs.
 
     python -m benchmark.pool --dataset covertype --data-dir /path/to/covertype --round sgd:1 \\
         --seeds 42 43 44 45 46 --workers 8
@@ -8,6 +8,10 @@ each process is that command for one method on one seed, so a run made here is
 the run the notebook or the command line would have made. What changes is how
 long the sweep takes, and the ``s_per_epoch`` a run records: runs that share a
 GPU slow each other down.
+
+Several sweeps can share one pool (:func:`run_sweeps`), which is how
+``python -m benchmark.rounds`` runs every round and ceiling of every dataset
+as one job.
 
 Runs that already have a record are skipped, as in a sequential sweep, so a
 pool that was stopped, or a job the cluster preempted and requeued, starts again
@@ -40,11 +44,13 @@ from .methods import ABLATIONS, run_key
 from .sweep import REPO_DIR, Experiment
 
 __all__ = [
+    "Sweep",
     "Task",
     "calibrated_from",
     "log_dir_for",
     "main",
     "pending",
+    "run_sweeps",
     "run_tasks",
     "visible_devices",
 ]
@@ -55,13 +61,38 @@ RUNS_PER_GPU = 4
 
 @dataclass(frozen=True)
 class Task:
-    """One run: one method on one seed."""
+    """One run: one method on one seed, of the sweep numbered ``sweep``."""
 
     method: str
     seed: int
+    sweep: int = 0
 
     def name(self, lr: float | None = None) -> str:
         return f"{run_key(self.method, lr)}_seed{self.seed}"
+
+
+@dataclass
+class Sweep:
+    """One experiment's runs, and the ``python -m benchmark`` flags that make each of them."""
+
+    experiment: Experiment
+    flags: Sequence[str]  # everything but --methods and --seeds of a single run
+    methods: Sequence[str]
+    lr: float | None = None
+    overwrite: bool = False
+    log_dir: Path | None = None  # default: log_dir_for(experiment)
+
+    def __post_init__(self) -> None:
+        if self.log_dir is None:
+            self.log_dir = log_dir_for(self.experiment)
+
+    @property
+    def name(self) -> str:
+        """Where its logs go, under ``logs/``: ``covertype/rounds/sgd_lr1``."""
+        try:
+            return str(Path(self.log_dir).relative_to(REPO_DIR / "logs"))
+        except ValueError:
+            return str(self.log_dir)
 
 
 class Handle(Protocol):
@@ -77,6 +108,7 @@ def pending(
     methods: Iterable[str],
     lr: float | None = None,
     overwrite: bool = False,
+    sweep: int = 0,
 ) -> list[Task]:
     """The runs still to make, seed by seed as in a sequential sweep.
 
@@ -84,12 +116,12 @@ def pending(
     calibrated from it, so they wait as little as they can.
     """
     tasks = [
-        Task(method, seed)
+        Task(method, seed, sweep)
         for seed in experiment.seeds
         for method in methods
         if overwrite or not experiment.result_path(method, seed, lr).exists()
     ]
-    first = Task("efficient", experiment.ablation_seed)
+    first = Task("efficient", experiment.ablation_seed, sweep)
     if experiment.calibrate_ablations and first in tasks:
         tasks.remove(first)
         tasks.insert(0, first)
@@ -99,7 +131,7 @@ def pending(
 def calibrated_from(experiment: Experiment, task: Task) -> Task | None:
     """The run a task reads its poll rate from, if it reads one."""
     if experiment.calibrate_ablations and task.method in ABLATIONS:
-        return Task("efficient", experiment.ablation_seed)
+        return Task("efficient", experiment.ablation_seed, task.sweep)
     return None
 
 
@@ -131,6 +163,7 @@ def run_tasks(
     recorded: Callable[[Task], bool],
     depends_on: Callable[[Task], Task | None] = lambda task: None,
     wait: Callable[[], None] = lambda: time.sleep(5),
+    describe: Callable[[Task], str] = lambda task: f"{task.method} seed {task.seed}",
 ) -> dict[Task, int | None]:
     """Run ``tasks`` at most ``workers`` at a time and return each one's exit code.
 
@@ -151,7 +184,7 @@ def run_tasks(
                     codes[task] = code
                     del running[slot]
                     outcome = "done" if code == 0 else f"FAILED with exit code {code}"
-                    print(f"{outcome}: {task.method} seed {task.seed}", flush=True)
+                    print(f"{outcome}: {describe(task)}", flush=True)
 
             active = {task for task, _ in running.values()}
             for task in list(queue):
@@ -161,10 +194,9 @@ def run_tasks(
                 if dependency is not None and not recorded(dependency):
                     codes[task] = None
                     queue.remove(task)
+                    needed = describe(dependency)
                     print(
-                        f"skipped: {task.method} seed {task.seed}, "
-                        f"which needs a record of {dependency.method} seed {dependency.seed}",
-                        flush=True,
+                        f"skipped: {describe(task)}, which needs a record of {needed}", flush=True
                     )
                     continue
                 free = [slot for slot in range(workers) if slot not in running]
@@ -182,6 +214,108 @@ def run_tasks(
     return codes
 
 
+def run_sweeps(sweeps: Sequence[Sweep], workers: int | None = None) -> dict[Task, int | None]:
+    """Make every run of ``sweeps`` that has no record yet, all of them in one pool.
+
+    Returns each run's exit code, ``None`` for an ablation whose calibration run
+    never left a record. The Efficient Polling runs the ablations read go first,
+    every sweep's, so no ablation waits for long.
+    """
+    if not sweeps:
+        return {}
+    cpu = str(sweeps[0].experiment.device).startswith("cpu")
+    devices = [] if cpu else visible_devices()
+    if workers is None:
+        workers = RUNS_PER_GPU * len(devices) if devices else 1
+    if workers < 1:
+        raise ValueError(f"workers must be at least 1, got {workers}")
+
+    queues = [
+        pending(s.experiment, s.methods, s.lr, s.overwrite, sweep=index)
+        for index, s in enumerate(sweeps)
+    ]
+    firsts = [
+        first
+        for index, (s, queue) in enumerate(zip(sweeps, queues, strict=True))
+        if s.experiment.calibrate_ablations
+        and (first := Task("efficient", s.experiment.ablation_seed, index)) in queue
+    ]
+    tasks = firsts + [task for queue in queues for task in queue if task not in firsts]
+
+    cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count()
+    threads = max(1, (cpus or 1) // workers)
+    for s in sweeps:
+        Path(s.log_dir).mkdir(parents=True, exist_ok=True)
+    print(
+        f"{len(tasks)} runs to make over {len(sweeps)} sweep(s), {workers} at a time on "
+        f"{', '.join(f'GPU {d}' for d in devices) or 'the CPU'}, {threads} CPU threads each",
+        flush=True,
+    )
+
+    def describe(task: Task) -> str:
+        prefix = f"{sweeps[task.sweep].name} | " if len(sweeps) > 1 else ""
+        return f"{prefix}{task.method} seed {task.seed}"
+
+    def start(task: Task, slot: int) -> subprocess.Popen[bytes]:
+        sweep = sweeps[task.sweep]
+        env = dict(os.environ, PYTHONUNBUFFERED="1")
+        env.setdefault("OMP_NUM_THREADS", str(threads))
+        if devices:
+            env["CUDA_VISIBLE_DEVICES"] = devices[slot % len(devices)]
+        # The seed the ablations calibrate from is named outright: a process
+        # holds one seed, so left to itself it would read its own run.
+        command = [
+            sys.executable,
+            "-m",
+            "benchmark",
+            *sweep.flags,
+            "--methods",
+            task.method,
+            "--seeds",
+            str(task.seed),
+            "--calibration-seed",
+            str(sweep.experiment.ablation_seed),
+        ]
+        where = f"GPU {env['CUDA_VISIBLE_DEVICES']}" if devices else "the CPU"
+        print(f"started: {describe(task)} on {where}", flush=True)
+        with open(Path(sweep.log_dir) / f"{task.name(sweep.lr)}.log", "ab") as log:
+            return subprocess.Popen(command, env=env, stdout=log, stderr=subprocess.STDOUT)
+
+    def recorded(task: Task) -> bool:
+        sweep = sweeps[task.sweep]
+        return sweep.experiment.result_path(task.method, task.seed, sweep.lr).exists()
+
+    # A job the cluster stops or preempts gets SIGTERM; exiting through the
+    # pool's cleanup stops the runs it started instead of orphaning them.
+    previous = signal.signal(signal.SIGTERM, lambda signum, _: sys.exit(128 + signum))
+    try:
+        return run_tasks(
+            tasks,
+            start,
+            workers,
+            recorded=recorded,
+            depends_on=lambda task: calibrated_from(sweeps[task.sweep].experiment, task),
+            describe=describe,
+        )
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def unfinished(codes: dict[Task, int | None], sweeps: Sequence[Sweep]) -> str | None:
+    """What to say when some runs did not finish, or ``None`` when all did."""
+    failed = [task for task, code in codes.items() if code != 0]
+    if not failed:
+        return None
+    names = ", ".join(
+        f"{sweeps[t.sweep].name}/{t.name(sweeps[t.sweep].lr)}"
+        if len(sweeps) > 1
+        else t.name(sweeps[t.sweep].lr)
+        for t in failed
+    )
+    logs = ", ".join(sorted({str(sweeps[t.sweep].log_dir) for t in failed}))
+    return f"\n{len(failed)} of {len(codes)} runs did not finish: {names}; see {logs}"
+
+
 def main(argv: list[str] | None = None) -> None:
     pool = argparse.ArgumentParser(
         prog="python -m benchmark.pool",
@@ -197,71 +331,25 @@ def main(argv: list[str] | None = None) -> None:
     )
     pool.add_argument("--log-dir", default=None, help="default: logs/, mirroring results/")
     ours, forwarded = pool.parse_known_args(argv)
+    if ours.workers is not None and ours.workers < 1:
+        pool.error(f"--workers must be at least 1, got {ours.workers}")
 
     args = parse_args(forwarded)
     experiment = build_experiment(args)
-    devices = [] if str(experiment.device).startswith("cpu") else visible_devices()
-    workers = ours.workers
-    if workers is None:
-        workers = RUNS_PER_GPU * len(devices) if devices else 1
-    if workers < 1:
-        pool.error(f"--workers must be at least 1, got {workers}")
-    log_dir = Path(ours.log_dir) if ours.log_dir else log_dir_for(experiment)
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    tasks = pending(experiment, args.methods, args.lr, args.overwrite)
-    cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count()
-    threads = max(1, (cpus or 1) // workers)
-    print(
-        f"{len(tasks)} runs to make, {workers} at a time on "
-        f"{', '.join(f'GPU {d}' for d in devices) or 'the CPU'}, {threads} CPU threads each; "
-        f"logs in {log_dir}",
-        flush=True,
+    sweep = Sweep(
+        experiment,
+        forwarded,
+        args.methods,
+        args.lr,
+        args.overwrite,
+        Path(ours.log_dir) if ours.log_dir else None,
     )
-
-    def start(task: Task, slot: int) -> subprocess.Popen[bytes]:
-        env = dict(os.environ, PYTHONUNBUFFERED="1")
-        env.setdefault("OMP_NUM_THREADS", str(threads))
-        if devices:
-            env["CUDA_VISIBLE_DEVICES"] = devices[slot % len(devices)]
-        # The seed the ablations calibrate from is named outright: a process
-        # holds one seed, so left to itself it would read its own run.
-        command = [
-            sys.executable,
-            "-m",
-            "benchmark",
-            *forwarded,
-            "--methods",
-            task.method,
-            "--seeds",
-            str(task.seed),
-            "--calibration-seed",
-            str(experiment.ablation_seed),
-        ]
-        where = f"GPU {env['CUDA_VISIBLE_DEVICES']}" if devices else "the CPU"
-        print(f"started: {task.method} seed {task.seed} on {where}", flush=True)
-        with open(log_dir / f"{task.name(args.lr)}.log", "ab") as log:
-            return subprocess.Popen(command, env=env, stdout=log, stderr=subprocess.STDOUT)
-
-    # A job the cluster stops or preempts gets SIGTERM; exiting through the
-    # pool's cleanup stops the runs it started instead of orphaning them.
-    previous = signal.signal(signal.SIGTERM, lambda signum, _: sys.exit(128 + signum))
-    try:
-        codes = run_tasks(
-            tasks,
-            start,
-            workers,
-            recorded=lambda task: experiment.result_path(task.method, task.seed, args.lr).exists(),
-            depends_on=lambda task: calibrated_from(experiment, task),
-        )
-    finally:
-        signal.signal(signal.SIGTERM, previous)
+    codes = run_sweeps([sweep], ours.workers)
 
     print_summary(args, experiment)
-    failed = [task for task, code in codes.items() if code != 0]
-    if failed:
-        names = ", ".join(task.name(args.lr) for task in failed)
-        sys.exit(f"\n{len(failed)} of {len(tasks)} runs did not finish: {names}; see {log_dir}")
+    message = unfinished(codes, [sweep])
+    if message:
+        sys.exit(message)
 
 
 if __name__ == "__main__":
