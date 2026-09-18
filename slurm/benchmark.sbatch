@@ -1,14 +1,14 @@
 #!/bin/bash
 #SBATCH --job-name=polling-benchmark
-#SBATCH --partition=short-simple       # up to 2 days; the job requeues itself before that, below
+#SBATCH --partition=long-simple        # up to 7 days: the whole study takes about two, on two A100s
 #SBATCH --gres=gpu:2                   # the GRES is untyped (gpu:N): choose A100 nodes with
-                                       # --nodelist at submission, not here
+                                       # --nodelist at submission, not here (on Apuana the
+                                       # long-simple A100s are cluster-node7's)
 #SBATCH --ntasks=1                     # one task: benchmark.pool starts the runs, not SLURM
 #SBATCH --cpus-per-task=16             # the ceiling of the simple QoS; the pool shares it out
 #SBATCH --mem=64G                      # every run holds its own copy of the dataset
-#SBATCH --time=2-00:00:00
-#SBATCH --signal=B:USR1@900            # 15 min before the limit, tell this script so
-#SBATCH --requeue                      # a preempted or timed-out job starts again from the runs left
+#SBATCH --time=7-00:00:00
+#SBATCH --requeue                      # a preempted job starts again from the runs left
 #SBATCH --open-mode=append             # and a requeued job adds to its log instead of erasing it
 #SBATCH --output=logs/%x-%j.out
 
@@ -16,15 +16,14 @@
 # 1e-3 and 1e-7) and every SPS/Armijo ceiling, of every dataset, in one pool of
 # processes over the job's GPUs (benchmark/rounds.py, benchmark/pool.py):
 #
-#     sbatch --nodelist=cluster-node9 slurm/benchmark.sbatch
-#     DATASETS=covertype sbatch --nodelist=cluster-node9 slurm/benchmark.sbatch
+#     sbatch --nodelist=cluster-node7 slurm/benchmark.sbatch
+#     DATASETS=covertype sbatch --nodelist=cluster-node7 slurm/benchmark.sbatch
 #
 # Each run is recorded in results/<dataset>/rounds/ or ceilings/ when it ends,
-# and a run that has a record is skipped. So the job does not need to fit in the
-# partition's two days: 15 minutes before the limit it puts itself back in the
-# queue, and the next start carries on from the runs left. It ends by printing
-# one table per initial LR of each dataset. Each run logs to logs/<dataset>/...,
-# and this job to logs/polling-benchmark-<job>.out.
+# and a run that has a record is skipped, so a job that was preempted, cancelled
+# or out of time carries on from the runs left when it starts again. It ends by
+# printing one table per initial LR of each dataset. Each run logs to
+# logs/<dataset>/..., and this job to logs/polling-benchmark-<job>.out.
 #
 # Variables:
 #   DATASETS   default "covertype cifar10 cifar100 mnist fashion_mnist"
@@ -63,27 +62,8 @@ fi
 read -r -a DATASET_LIST <<< "${DATASETS:-covertype cifar10 cifar100 mnist fashion_mnist}"
 read -r -a SEED_LIST <<< "${SEEDS:-42 43 44 45 46}"
 
-# Near the time limit SLURM sends USR1 to this script. Requeueing stops every
-# process of the job (the finished runs are already on disk) and queues it again.
-requeue() {
-    echo "time limit near: requeueing job $SLURM_JOB_ID | $(date '+%F %T')"
-    scontrol requeue "$SLURM_JOB_ID"
-}
-trap requeue USR1
-
-# In the background, so the trap can run while the study does: bash runs a trap
-# only between commands, and `wait` is one it can interrupt.
 python -m benchmark.rounds \
     --data-root "${DATA_ROOT:-$HOME/Datasets}" \
     --datasets "${DATASET_LIST[@]}" \
     --seeds "${SEED_LIST[@]}" \
-    ${WORKERS:+--workers "$WORKERS"} &
-STUDY=$!
-status=0
-while true; do
-    wait "$STUDY" && status=0 || status=$?
-    # A trapped signal ends `wait` early with a code above 128 while the study
-    # still runs; any other return is the study's own exit.
-    kill -0 "$STUDY" 2>/dev/null || break
-done
-exit "$status"
+    ${WORKERS:+--workers "$WORKERS"}

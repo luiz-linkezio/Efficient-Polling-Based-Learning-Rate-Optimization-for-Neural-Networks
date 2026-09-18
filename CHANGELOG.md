@@ -44,7 +44,8 @@ four more datasets, the runs on them, and a reorganized repository.
   and reads it back as one table per initial rate: every method on SGD, SPS
   and Armijo with the rate as ceiling, every method on Adam, each row with the
   columns of the main table. `slurm/benchmark.sbatch` runs the study as one
-  job, which requeues itself before the partition's time limit.
+  job on `long-simple`, whose seven days fit the two the study takes on two
+  A100s.
 - An Initial LR column in every results table, saying what rate each method
   was given: `1e-3, fixed` for the fixed rate, `1e-1 → 0` for cosine
   annealing, `grid 1e-5–1e-1` for the polling methods, the ceiling SPS and

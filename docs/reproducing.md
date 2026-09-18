@@ -143,13 +143,13 @@ rsync -av ~/Datasets/{cifar-10-python,cifar-100-python,MNIST,fashion-mnist,cover
 Then submit it once, and follow it:
 
 ```bash
-sbatch --nodelist=<node> slurm/benchmark.sbatch                      # every dataset
-DATASETS="covertype cifar10" sbatch --nodelist=<node> slurm/benchmark.sbatch
+sbatch --nodelist=cluster-node7 slurm/benchmark.sbatch                 # every dataset
+DATASETS="covertype cifar10" sbatch --nodelist=cluster-node7 slurm/benchmark.sbatch
 squeue -u $USER
 tail -f logs/polling-benchmark-<job id>.out
 ```
 
-The job asks for two GPUs, 16 CPUs, 64 GB and two days on `short-simple`, the limits of the cluster it was written for, Apuana at CIn/UFPE, where the GPUs are untyped in SLURM and a node is picked with `--nodelist`. Options on the `sbatch` command line override the file's. The study does not have to fit in two days: fifteen minutes before the limit the job requeues itself, and each start carries on from the runs that had not finished, as a preempted job does. It ends by printing one table per initial rate of each dataset. The records are written to the clone on the cluster; bring them back with
+The job asks for two GPUs, 16 CPUs and 64 GB, the limits of the simple QoS of the cluster it was written for, Apuana at CIn/UFPE, and up to seven days on `long-simple`: the whole study takes about two days on two A100s, more than `short-simple` allows. The GPUs are untyped in SLURM there, so a node is picked with `--nodelist`, and the A100s of `long-simple` are `cluster-node7`'s. Options on the `sbatch` command line override the file's. A preempted job is requeued, and a job submitted again after a cancel carries on from the runs that had not finished. It ends by printing one table per initial rate of each dataset. The records are written to the clone on the cluster; bring them back with
 
 ```bash
 rsync -av <user>@<login node>:Efficient-Polling-Based-Learning-Rate-Optimization-for-Neural-Networks/results/ results/
