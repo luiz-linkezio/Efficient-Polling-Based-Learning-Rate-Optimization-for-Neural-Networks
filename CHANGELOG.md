@@ -117,6 +117,11 @@ four more datasets, the runs on them, and a reorganized repository.
 
 ### Fixed
 
+- A run that diverged, with a NaN or infinite test loss, no longer breaks the
+  tables: `statistics.stdev` raised on it, which made the process of every
+  seed after the first die right after writing its record, reported by the
+  pool as a failed run, and would have stopped the per-rate tables as well.
+  The mean and deviation now carry the NaN or inf into the table.
 - The READMEs said Efficient Polling's backoff is immune to stalling at its
   smallest candidate. It is not: the rule that holds the backoff back records
   signal on the first poll whose candidates differ, which a single correct

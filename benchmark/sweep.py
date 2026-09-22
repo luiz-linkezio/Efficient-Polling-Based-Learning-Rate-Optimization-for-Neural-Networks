@@ -365,11 +365,19 @@ def record_label(method: str, run: dict[str, Any]) -> str:
 
 
 def summarize(values: list[float]) -> tuple[float, float]:
-    """Mean and sample standard deviation; the deviation of a single run is zero."""
+    """Mean and sample standard deviation; the deviation of a single run is zero.
+
+    A run that diverged records a loss of NaN or inf, which ``statistics``
+    refuses with an exception. The mean carries it instead, as NaN or inf, and
+    so does the deviation, as NaN: a table with a diverged seed says so. Plain
+    float addition, because ``fmean`` raises on inf and -inf together.
+    """
     if not values:
         return math.nan, math.nan
     if len(values) == 1:
         return values[0], 0.0
+    if not all(math.isfinite(v) for v in values):
+        return sum(values) / len(values), math.nan
     return statistics.fmean(values), statistics.stdev(values)
 
 
