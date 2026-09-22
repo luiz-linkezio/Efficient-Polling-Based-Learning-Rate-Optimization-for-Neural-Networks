@@ -301,6 +301,29 @@ def test_a_single_run_has_no_spread_and_no_runs_have_no_mean() -> None:
     assert all(math.isnan(v) for v in summarize([]))
 
 
+@pytest.mark.parametrize(
+    ("values", "mean"),
+    [([math.nan, 1.0], math.nan), ([1.0, math.inf], math.inf), ([math.inf, -math.inf], math.nan)],
+)
+def test_a_diverged_run_carries_its_nan_or_inf_into_the_summary_instead_of_raising(
+    values: list[float], mean: float
+) -> None:
+    """statistics.stdev raises on either, and a run at a rate of 1 diverges."""
+    got_mean, deviation = summarize(values)
+
+    assert math.isnan(deviation)
+    assert (math.isnan(got_mean) and math.isnan(mean)) or got_mean == mean
+
+
+def test_a_table_with_a_diverged_seed_prints_it_as_nan() -> None:
+    seeds = [record("baseline", 42, test_loss=math.nan), record("baseline", 43, test_loss=1.2)]
+
+    row = results_table({"baseline": seeds}, Hyperparameters()).splitlines()[-1]
+
+    assert "| nan ± nan |" in row
+    assert row.endswith("| 2 |")
+
+
 def test_the_table_reports_mean_and_sample_deviation() -> None:
     seeds = [record("efficient", 42, test_acc=0.8), record("efficient", 43, test_acc=0.9)]
 

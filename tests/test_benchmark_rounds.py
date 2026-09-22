@@ -9,6 +9,7 @@ records or checkpoints can land where another's are.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -415,6 +416,41 @@ def test_the_rows_go_sgd_then_sps_and_armijo_then_adam(tmp_path: Path) -> None:
         "SPS (Polyak), ceiling 1e-7",
         "Armijo line search, ceiling 1e-7",
     ]
+
+
+def test_a_run_that_diverged_neither_stops_its_process_nor_the_tables(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """At a rate of 1, SGD with no guard ends with a NaN test loss. The process of
+    the second such seed used to write its record and then die printing its
+    summary, which the pool reported as a failed run; the tables died the same way."""
+    folder = tmp_path / "rounds" / "sgd_lr1"
+    for seed in (42, 43):
+        write(
+            folder / f"baseline_seed{seed}.json",
+            record("baseline", seed, lr0=1.0, test_loss=math.nan),
+        )
+
+    main(
+        [
+            "--data-dir",
+            str(tmp_path / "missing"),
+            "--results-dir",
+            str(tmp_path),
+            "--round",
+            "sgd:1",
+            "--methods",
+            "baseline",
+            "--seeds",
+            "43",
+            "--calibration-seed",
+            "42",
+        ]
+    )
+    table = rate_table(Experiment("cifar10", "/nowhere", seeds=(42, 43), results_dir=tmp_path), 1.0)
+
+    assert "| SGD (fixed 1) | 1, fixed |" in capsys.readouterr().out
+    assert "| Fixed rate | SGD |" in table and "nan ± nan" in table
 
 
 def test_there_is_one_table_per_initial_rate(tmp_path: Path) -> None:
