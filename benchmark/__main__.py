@@ -30,6 +30,11 @@ def _ceiling(text: str) -> float | None:
     return None if math.isinf(value) else value
 
 
+def _cap(text: str) -> int | None:
+    """An optional cap on a count; ``none`` means none."""
+    return None if text.strip().lower() == "none" else int(text)
+
+
 def _round(text: str) -> Round:
     """A learning-rate round, written ``OPTIMIZER:RATE``."""
     optimizer, colon, rate = text.partition(":")
@@ -120,8 +125,9 @@ SETTINGS: tuple[tuple[str, str, str, Callable[[str], Any], str], ...] = (
         "--max-narrowings",
         "relative",
         "max_narrowings",
-        int,
-        "Efficient Relative Narrowing Polling: narrowings that can pile up",
+        _cap,
+        "Efficient Relative Narrowing Polling: optional cap on the narrowings that pile up; "
+        "none sets no cap",
     ),
     (
         "--patience",

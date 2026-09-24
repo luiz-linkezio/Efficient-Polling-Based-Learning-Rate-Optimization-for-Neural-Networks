@@ -21,10 +21,17 @@ takes a whole poll off its own patience and ``break_discount`` of a poll off the
 other's, since a poll that breaks a trend is weak evidence against it: it slows
 the countdown without giving back what was spent, so a stray poll cannot undo a
 plateau that is forming. When a patience runs out the jump moves one step, unless
-it is already at ``m`` or at the finest jump, and both patiences start again
-from ``patience``. The patience is a different
-counter from the poll interval ``k`` of the backoff, which is untouched: ``k``
-decides when to poll, ``p_n`` and ``p_w`` how finely.
+it is already at ``m`` or at the cap ``max_narrowings`` sets, and both patiences
+start again from ``patience``. The patience is a different counter from the poll
+interval ``k`` of the backoff, which is untouched: ``k`` decides when to poll,
+``p_n`` and ``p_w`` how finely.
+
+Nothing caps the narrowings by default. A plateau that lasts keeps narrowing the
+jump, and what stops it is the polls themselves: candidates too close for the
+criterion to tell apart tie, and a tie on a narrowed jump counts toward
+widening. ``max_narrowings`` sets a cap when one is wanted. The one limit that
+always holds is numerical: a narrowing that would put the neighbours within
+rounding of the centre does not happen, since the poll would try one rate.
 
 A step is soft: a narrowing takes a fraction ``narrowing`` off the jump,
 measured in orders of magnitude, ``f -> f ** (1 - narrowing)``, and a widening
@@ -96,8 +103,11 @@ class NarrowingWindow(Window):
         narrowing: fraction of the jump, in orders of magnitude, one narrowing
             takes off. ``0.5`` puts the next neighbour on the geometric middle
             between the two rates of the previous jump; ``0`` never narrows.
-        max_narrowings: narrowings that can pile up, so the jump never gets
-            finer than ``multiplier ** ((1 - narrowing) ** max_narrowings)``.
+        max_narrowings: optional cap on the narrowings that can pile up, so the
+            jump never gets finer than
+            ``multiplier ** ((1 - narrowing) ** max_narrowings)``. ``None``, the
+            default, sets none: the jump narrows as long as the polls keep
+            bracketing the rate, short of the neighbours rounding onto the centre.
         patience: polls of one behaviour -- the rate bracketed, or the rate
             running one way -- before the jump narrows or widens a step.
         break_discount: what a poll of the other behaviour takes off a
@@ -113,21 +123,21 @@ class NarrowingWindow(Window):
         lr_max: float | None = None,
         max_reach: int = 6,
         narrowing: float = 0.5,
-        max_narrowings: int = 3,
+        max_narrowings: int | None = None,
         patience: int = 8,
         break_discount: float = 0.5,
     ) -> None:
         super().__init__(multiplier, lr_min, lr_max, max_reach)
         if not (math.isfinite(narrowing) and 0.0 <= narrowing < 1.0):
             raise ValueError(f"narrowing must be in [0, 1), got {narrowing}")
-        if max_narrowings < 0:
-            raise ValueError(f"max_narrowings must be at least 0, got {max_narrowings}")
+        if max_narrowings is not None and max_narrowings < 0:
+            raise ValueError(f"max_narrowings must be at least 0 or None, got {max_narrowings}")
         if patience < 1:
             raise ValueError(f"patience must be at least 1, got {patience}")
         if not (math.isfinite(break_discount) and 0.0 <= break_discount < 1.0):
             raise ValueError(f"break_discount must be in [0, 1), got {break_discount}")
         self.narrowing = float(narrowing)
-        self.max_narrowings = int(max_narrowings)
+        self.max_narrowings = None if max_narrowings is None else int(max_narrowings)
         self.patience = int(patience)
         self.break_discount = float(break_discount)
         self.depth = 0
@@ -141,13 +151,6 @@ class NarrowingWindow(Window):
         if self.depth == 0:
             return super().factor
         return self.multiplier ** ((1.0 - self.narrowing) ** self.depth)
-
-    @property
-    def finest(self) -> float:
-        """The narrowest jump the window can reach."""
-        if self.narrowing == 0.0:
-            return self.multiplier
-        return self.multiplier ** ((1.0 - self.narrowing) ** self.max_narrowings)
 
     def at_bound(self, centre: float) -> bool:
         """Whether ``centre`` sits on a bound, which folds one neighbour into it."""
@@ -242,9 +245,18 @@ class NarrowingWindow(Window):
     def _step(self, widen: bool) -> None:
         if widen:
             self.depth = max(0, self.depth - 1)
-        elif self.narrowing > 0.0:
-            self.depth = min(self.depth + 1, self.max_narrowings)
+        elif self._can_narrow():
+            self.depth += 1
         self._refill()
+
+    def _can_narrow(self) -> bool:
+        if self.narrowing == 0.0:
+            return False
+        if self.max_narrowings is not None and self.depth >= self.max_narrowings:
+            return False
+        # Past this the neighbours would round onto the centre: a poll of one rate.
+        finer = self.multiplier ** ((1.0 - self.narrowing) ** (self.depth + 1))
+        return not _same(finer, 1.0)
 
     def _refill(self) -> None:
         self.narrow_patience = float(self.patience)
@@ -298,7 +310,8 @@ class EfficientRelativeNarrowingPollingOptimizer(EfficientRelativePollingOptimiz
             takes off; see :class:`NarrowingWindow`. ``0`` never narrows,
             which is Efficient Relative Polling with the bounds held against
             rounding.
-        max_narrowings: narrowings that can pile up; see :class:`NarrowingWindow`.
+        max_narrowings: optional cap on the narrowings that can pile up, none by
+            default; see :class:`NarrowingWindow`.
         patience: polls of one behaviour before the jump moves a step; see
             :class:`NarrowingWindow`.
         break_discount: what a poll that breaks a behaviour takes off its
@@ -318,7 +331,7 @@ class EfficientRelativeNarrowingPollingOptimizer(EfficientRelativePollingOptimiz
         module: nn.Module | None = None,
         *,
         narrowing: float = 0.5,
-        max_narrowings: int = 3,
+        max_narrowings: int | None = None,
         patience: int = 8,
         break_discount: float = 0.5,
         **kwargs: Any,
@@ -341,7 +354,7 @@ class EfficientRelativeNarrowingPollingOptimizer(EfficientRelativePollingOptimiz
         return self.window.narrowing
 
     @property
-    def max_narrowings(self) -> int:
+    def max_narrowings(self) -> int | None:
         return self.window.max_narrowings
 
     @property

@@ -134,13 +134,13 @@ def test_a_lasting_plateau_never_widens() -> None:
         kept(window)
         depths.append(window.depth)
     assert depths == sorted(depths)
-    assert window.depth == window.max_narrowings
+    assert window.depth == 15  # one narrowing per 4 centre wins, none of them capped
 
 
 def test_a_patience_that_runs_out_at_a_cap_still_refills_both() -> None:
-    """At the finest jump a plateau keeps refilling the widening patience it discounts."""
-    window = NarrowingWindow(multiplier=10.0, patience=4, break_discount=0.5)
-    kept(window, times=60)  # the floor, then 48 more centre wins
+    """At the cap a plateau keeps refilling the widening patience it discounts."""
+    window = NarrowingWindow(multiplier=10.0, max_narrowings=3, patience=4, break_discount=0.5)
+    kept(window, times=60)  # the cap, then 48 more centre wins
     assert window.depth == window.max_narrowings
     moved(window, +1)  # first move
     for _ in range(3):
@@ -189,12 +189,35 @@ def test_the_narrowing_is_a_fraction_of_the_jump() -> None:
     assert exponents == pytest.approx([0.75, 0.75**2, 0.75**3])
 
 
-def test_narrowings_stop_at_the_finest_jump() -> None:
+def test_nothing_caps_the_narrowings_by_default() -> None:
+    window = NarrowingWindow(multiplier=10.0, narrowing=0.5, patience=1)
+    assert window.max_narrowings is None
+    kept(window, times=10)
+    assert window.depth == 10
+    assert window.factor == pytest.approx(10.0 ** (0.5**10))
+
+
+def test_max_narrowings_caps_the_narrowings() -> None:
     window = NarrowingWindow(multiplier=10.0, narrowing=0.5, max_narrowings=3, patience=1)
     kept(window, times=10)
     assert window.depth == 3
     assert window.factor == pytest.approx(10.0**0.125)
-    assert window.finest == pytest.approx(window.factor)
+
+
+@pytest.mark.parametrize("narrowing", [0.25, 0.5, 0.9])
+def test_the_jump_stops_narrowing_before_the_neighbours_round_onto_the_centre(
+    narrowing: float,
+) -> None:
+    window = NarrowingWindow(multiplier=10.0, narrowing=narrowing, patience=1)
+    kept(window, times=500)
+    deepest = window.depth
+    assert 0 < deepest < 500
+    kept(window)
+    assert window.depth == deepest
+    centre, lower, upper = window.candidates(X, ascending=False)
+    assert lower < centre < upper
+    finer = window.multiplier ** ((1.0 - narrowing) ** (deepest + 1))
+    assert math.isclose(X * finer, X, rel_tol=1e-9)  # one more would round onto X
 
 
 def test_the_first_narrowing_lands_on_the_middle() -> None:
@@ -382,6 +405,13 @@ def test_rejects_a_negative_number_of_narrowings() -> None:
         NarrowingWindow(max_narrowings=-1)
 
 
+def test_a_cap_of_zero_never_narrows() -> None:
+    window = NarrowingWindow(multiplier=10.0, max_narrowings=0, patience=1)
+    kept(window, times=5)
+    assert window.depth == 0
+    assert window.factor == 10.0
+
+
 def test_rejects_a_patience_below_one() -> None:
     with pytest.raises(ValueError, match="patience"):
         NarrowingWindow(patience=0)
@@ -494,7 +524,7 @@ def test_the_narrowing_leaves_the_backoff_alone(batch) -> None:
     intervals, reference_intervals = [], []
     for _ in range(4):
         intervals.append(polled_step(poller, closure).poll_interval)
-    assert poller.window.depth == 3  # the jump moved on every one of those polls
+    assert poller.window.depth == 4  # the jump moved on every one of those polls
     for _ in range(4):
         reference.backoff.polled(changed=False, had_signal=True)
         reference_intervals.append(reference.backoff.interval)
@@ -651,6 +681,7 @@ def test_the_sgd_class_forwards_sgd_settings() -> None:
     assert poller.narrowing == 0.3
     assert poller.patience == 3
     assert poller.break_discount == 0.25
+    assert poller.max_narrowings is None
     assert "narrowing=0.3" in repr(poller)
     assert "patience=3" in repr(poller)
     assert "break_discount=0.25" in repr(poller)

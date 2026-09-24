@@ -28,7 +28,9 @@ reorganized repository.
   of their own, apart from the backoff's poll interval `k`. A narrowing takes
   the fraction `narrowing` off the jump in orders of magnitude (`0.5` puts the
   next neighbour on the geometric middle; `0` never narrows), and
-  `max_narrowings` bounds how many pile up. A tie on a narrowed jump counts
+  `max_narrowings` optionally caps how many pile up. By default nothing does:
+  a lasting plateau keeps narrowing the jump until the candidates tie, short of
+  the neighbours rounding onto the centre. A tie on a narrowed jump counts
   toward widening; at `m` it widens the window at once, as before. A centre on
   `lr_min` or `lr_max` has one neighbour folded into it, so its win counts for
   neither behaviour, and a rate within rounding of a bound counts as on it,

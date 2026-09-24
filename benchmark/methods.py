@@ -179,9 +179,10 @@ class EfficientRelative:
     lr_max: float | None = 1e-1
     spike_z: float = 3.0  # per batch: deviations above the loss trend that force a poll
     # Narrowing only: the fraction of the jump, in decades for m = 10, that one
-    # narrowing takes off (0.5 lands on the geometric middle), and how many can pile up.
+    # narrowing takes off (0.5 lands on the geometric middle), and an optional cap on
+    # how many can pile up; None sets no cap.
     narrowing: float = 0.5
-    max_narrowings: int = 3
+    max_narrowings: int | None = None
     # Narrowing only: polls a behaviour has to last before the jump moves, and what a
     # poll that breaks it takes off that patience, as a fraction of a poll.
     patience: int = 8
@@ -261,9 +262,12 @@ def initial_lr(method: str, hyperparameters: Hyperparameters) -> str:
     if method in ("efficient_relative", "efficient_relative_epoch", "efficient_relative_narrowing"):
         ceiling = "no ceiling" if r.lr_max is None else f"ceiling {rate_text(r.lr_max)}"
         jump = f"×÷{r.multiplier:g}"
-        if method == "efficient_relative_narrowing" and r.narrowing > 0 and r.max_narrowings > 0:
-            finest = r.multiplier ** ((1 - r.narrowing) ** r.max_narrowings)
-            jump = f"{jump} down to ×÷{finest:.3g}"
+        if method == "efficient_relative_narrowing" and r.narrowing > 0:
+            if r.max_narrowings is None:
+                jump = f"{jump} and finer"
+            elif r.max_narrowings > 0:
+                finest = r.multiplier ** ((1 - r.narrowing) ** r.max_narrowings)
+                jump = f"{jump} down to ×÷{finest:.3g}"
         return f"{lr}, {jump}, {ceiling}"
     return lr
 
