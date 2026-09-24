@@ -250,13 +250,18 @@ class NarrowingWindow(Window):
         self._refill()
 
     def _can_narrow(self) -> bool:
+        return self._reachable(self.depth + 1) == self.depth + 1
+
+    def _reachable(self, depth: int) -> int:
+        """The deepest narrowing up to ``depth`` this window allows."""
         if self.narrowing == 0.0:
-            return False
-        if self.max_narrowings is not None and self.depth >= self.max_narrowings:
-            return False
+            return 0
+        if self.max_narrowings is not None:
+            depth = min(depth, self.max_narrowings)
         # Past this the neighbours would round onto the centre: a poll of one rate.
-        finer = self.multiplier ** ((1.0 - self.narrowing) ** (self.depth + 1))
-        return not _same(finer, 1.0)
+        while depth > 0 and _same(self.multiplier ** ((1.0 - self.narrowing) ** depth), 1.0):
+            depth -= 1
+        return depth
 
     def _refill(self) -> None:
         self.narrow_patience = float(self.patience)
@@ -281,8 +286,9 @@ class NarrowingWindow(Window):
     def load_state_dict(self, state: dict[str, Any]) -> None:
         super().load_state_dict(state)
         # A Window's state has none of these, and loads as a jump at the full
-        # multiplier with fresh patiences.
-        self.depth = int(state.get("depth", 0))
+        # multiplier with fresh patiences. A depth saved under another cap or
+        # narrowing comes back as the deepest this window allows.
+        self.depth = self._reachable(max(0, int(state.get("depth", 0))))
         self.last_move = int(state.get("last_move", 0))
         self.narrow_patience = float(state.get("narrow_patience", self.patience))
         self.widen_patience = float(state.get("widen_patience", self.patience))

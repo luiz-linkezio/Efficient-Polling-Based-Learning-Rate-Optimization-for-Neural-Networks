@@ -31,8 +31,13 @@ def _ceiling(text: str) -> float | None:
 
 
 def _cap(text: str) -> int | None:
-    """An optional cap on a count; ``none`` means none."""
-    return None if text.strip().lower() == "none" else int(text)
+    """An optional cap on a count; ``none`` or ``inf`` means none."""
+    if text.strip().lower() in ("none", "inf"):
+        return None
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be at least 0, or none, got {value}")
+    return value
 
 
 def _round(text: str) -> Round:
@@ -127,7 +132,7 @@ SETTINGS: tuple[tuple[str, str, str, Callable[[str], Any], str], ...] = (
         "max_narrowings",
         _cap,
         "Efficient Relative Narrowing Polling: optional cap on the narrowings that pile up; "
-        "none sets no cap",
+        "none or inf sets no cap",
     ),
     (
         "--patience",

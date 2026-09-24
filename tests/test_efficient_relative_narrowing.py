@@ -394,6 +394,31 @@ def test_a_state_without_patiences_loads_with_fresh_ones() -> None:
     assert restored.narrow_patience == restored.widen_patience == 3
 
 
+def test_a_state_deeper_than_the_cap_loads_at_the_cap() -> None:
+    uncapped = NarrowingWindow(multiplier=10.0, patience=1)
+    kept(uncapped, times=10)
+    assert uncapped.depth == 10
+
+    capped = NarrowingWindow(multiplier=10.0, max_narrowings=3, patience=1)
+    capped.load_state_dict(uncapped.state_dict())
+    assert capped.depth == 3
+    assert capped.factor == pytest.approx(10.0**0.125)
+
+
+def test_a_state_too_deep_for_the_narrowing_loads_with_the_neighbours_apart() -> None:
+    fine = NarrowingWindow(multiplier=10.0, narrowing=0.5, patience=1)
+    kept(fine, times=500)
+    coarse = NarrowingWindow(multiplier=10.0, narrowing=0.9, patience=1)
+    kept(coarse, times=500)
+    assert fine.depth > coarse.depth
+
+    restored = NarrowingWindow(multiplier=10.0, narrowing=0.9, patience=1)
+    restored.load_state_dict(fine.state_dict())
+    assert restored.depth == coarse.depth
+    centre, lower, upper = restored.candidates(X, ascending=False)
+    assert lower < centre < upper
+
+
 @pytest.mark.parametrize("narrowing", [-0.1, 1.0, math.nan])
 def test_rejects_a_narrowing_outside_zero_to_one(narrowing: float) -> None:
     with pytest.raises(ValueError, match="narrowing"):

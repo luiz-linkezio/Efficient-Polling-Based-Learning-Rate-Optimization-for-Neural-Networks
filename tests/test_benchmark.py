@@ -367,11 +367,18 @@ def test_an_infinite_ceiling_lets_the_relative_window_roam() -> None:
     assert build_experiment(args).hyperparameters.relative.lr_max is None
 
 
-@pytest.mark.parametrize(("flag", "cap"), [("3", 3), ("none", None), ("None", None)])
+@pytest.mark.parametrize(
+    ("flag", "cap"), [("3", 3), ("0", 0), ("none", None), ("None", None), ("inf", None)]
+)
 def test_the_narrowings_take_an_optional_cap(flag: str, cap: int | None) -> None:
     args = parse_args(["--data-dir", "/nowhere", "--max-narrowings", flag])
 
     assert build_experiment(args).hyperparameters.relative.max_narrowings == cap
+
+
+def test_a_negative_cap_on_the_narrowings_is_refused_up_front() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--data-dir", "/nowhere", "--max-narrowings", "-1"])
 
 
 def test_a_cap_on_the_narrowings_names_the_finest_jump() -> None:
