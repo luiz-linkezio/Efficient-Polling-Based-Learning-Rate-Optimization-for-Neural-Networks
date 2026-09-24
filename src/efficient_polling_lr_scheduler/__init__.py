@@ -31,6 +31,10 @@ from .efficient_relative import (
     EfficientRelativePollingOptimizer,
     EfficientRelativePollingSGD,
 )
+from .efficient_relative_narrowing import (
+    EfficientRelativeNarrowingPollingOptimizer,
+    EfficientRelativeNarrowingPollingSGD,
+)
 from .polling import (
     PollingOptimizer,
     PollingSGD,
@@ -40,7 +44,7 @@ from .polling import (
 )
 from .training import EpochStats, History, evaluate, fit, train_epoch
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 
 __all__ = [
     "ArmijoOptimizer",
@@ -49,6 +53,8 @@ __all__ = [
     "EfficientPollingOptimizer",
     "EfficientPollingSGD",
     "EfficientRelativeEpochPolling",
+    "EfficientRelativeNarrowingPollingOptimizer",
+    "EfficientRelativeNarrowingPollingSGD",
     "EfficientRelativePollingOptimizer",
     "EfficientRelativePollingSGD",
     "EpochStats",

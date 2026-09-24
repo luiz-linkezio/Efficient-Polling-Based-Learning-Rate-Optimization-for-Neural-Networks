@@ -46,7 +46,7 @@ from torch.optim import Optimizer
 
 from ._snapshot import StateSnapshot
 from .closures import Closure
-from .polling import _SGD_KEYS, PollingOptimizer, StepInfo, _split_module
+from .polling import _SGD_KEYS, PollingOptimizer, PollResult, StepInfo, _split_module
 from .training import EpochStats
 
 __all__ = [
@@ -268,6 +268,11 @@ class Window:
         self.max_reach = int(max_reach)
         self.reach = 1
 
+    @property
+    def factor(self) -> float:
+        """Ratio between the centre and each neighbour on the next poll."""
+        return self.multiplier**self.reach
+
     def candidates(self, centre: float, ascending: bool) -> tuple[float, ...]:
         """The candidates in tie-break order, folded into the bounds.
 
@@ -275,7 +280,7 @@ class Window:
         a restart lists the rates ascending so ties go one notch down. Two
         candidates folded into the same bound leave one.
         """
-        factor = self.multiplier**self.reach
+        factor = self.factor
         lower, upper = centre / factor, centre * factor
         order = (lower, centre, upper) if ascending else (centre, lower, upper)
         candidates: list[float] = []
@@ -495,7 +500,7 @@ class EfficientRelativePollingOptimizer(PollingOptimizer):
         self.backoff.polled(
             changed=poll.lr != centre, had_signal=poll.had_signal, scheduled=scheduled
         )
-        self.window.polled(poll.had_signal)
+        self._update_window(centre, poll)
 
         return StepInfo(
             lr=poll.lr,
@@ -509,6 +514,10 @@ class EfficientRelativePollingOptimizer(PollingOptimizer):
             post_score=poll.post_score,
             optimizer_steps=poll.optimizer_steps,
         )
+
+    def _update_window(self, centre: float, poll: PollResult) -> None:
+        """Set the window for the next poll from the outcome of this one."""
+        self.window.polled(poll.had_signal)
 
     def _blew_up(self, loss_value: float) -> bool:
         if not math.isfinite(loss_value):

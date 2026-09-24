@@ -5,6 +5,7 @@
 - [Polling](#polling-método-base-replicado), o método base replicado
 - [Efficient Polling](#efficient-polling), que faz poll sob demanda
 - [Efficient Relative Polling](#efficient-relative-polling), que dispensa a grade fixa
+- [Efficient Relative Narrowing Polling](#efficient-relative-narrowing-polling), cujo pulo estreita entre duas taxas
 - [Modelo de custo](#modelo-de-custo)
 
 ## Polling (método base replicado)
@@ -73,6 +74,38 @@ optimizer = EfficientRelativePollingSGD(model, lr=1e-3, multiplier=10.0, lr_max=
 | `ℓ_rb` | `2·ln(classes)` | limiar de estouro, como acima |
 
 O `EfficientRelativeEpochPolling` aplica a mesma janela por época em vez de por batch, conduzido por `fit(..., epoch_polling=...)`: treina uma época inteira por candidato a partir de um snapshot e mantém a que teve a menor perda média de treino. Fica como resultado negativo documentado; ver [Resultados](results.md#efficient-relative-polling).
+
+## Efficient Relative Narrowing Polling
+
+O Efficient Relative Polling move a taxa um multiplicador inteiro por vez. Com `m = 10` ela vive nas décadas, e quando a taxa que o batch quer fica entre duas delas, ela salta de uma para a outra e nunca testa o que fica no meio. O Efficient Relative Narrowing Polling deixa o próprio pulo `f` se adaptar, começando em `m`:
+
+```
+C_t = {X/f, X, X·f}        f = m^((1 − ν)^d)
+```
+
+`d` conta os estreitamentos em vigor e `ν` é a fração do pulo, em ordens de grandeza, que um estreitamento tira. Depois de cada poll com sinal, exceto o que encerra um trecho cego, que só traz a janela alargada de volta a `m`:
+
+1. **O vencedor inverteu** (a taxa subiu e agora volta a descer, ou o contrário): a taxa que o batch quer fica entre as duas, então `d` cresce um.
+2. **O centro ganhou:** a taxa está cercada, então `d` cresce um. Um centro em `lr_min` ou `lr_max` tem um vizinho dobrado sobre ele e não cerca nada, então deixa `d` como está.
+3. **O vencedor seguiu** no sentido em que se moveu da última vez: a taxa ainda está longe, então `d` diminui um, e o pulo nunca fica mais largo que `m` por esse caminho.
+
+O estreitamento é suave: um passo por vez nos dois sentidos, até `d_max` passos. Um poll cego desfaz um estreitamento antes de a janela alargar além de `m` como no Efficient Relative Polling, um restart volta para `f = m`, e o backoff, a tendência e os restarts não mudam. Produtos de pulos fracionários desviam um ou dois ulps, então uma taxa a um arredondamento de um limite conta como estando nele. Com `ν = 0` o método é o Efficient Relative Polling, salvo esse arredondamento nos limites.
+
+```python
+from efficient_polling_lr_scheduler import EfficientRelativeNarrowingPollingSGD
+
+optimizer = EfficientRelativeNarrowingPollingSGD(
+    model, lr=1e-3, multiplier=10.0, narrowing=0.5, max_narrowings=3, lr_max=1e-1
+)
+```
+
+| Símbolo | Padrão | Papel |
+|---|---|---|
+| `m` | `10` | o pulo mais largo, como no Efficient Relative Polling |
+| `ν` | `0.5` | `narrowing`: fração do pulo que um estreitamento tira; `0.5` põe o próximo vizinho no meio geométrico, `X·√10` para `m = 10` |
+| `d_max` | `3` | `max_narrowings`: o pulo mais fino é `m^((1 − ν)^d_max)`, `×1,33` com os padrões |
+
+É experimental: nada foi rodado com ele além de um teste de fumaça.
 
 ## Modelo de custo
 

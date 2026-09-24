@@ -1,4 +1,4 @@
-"""The thirteen configurations the paper compares, and how each one is built.
+"""The configurations the paper compares, the methods added since, and how each one is built.
 
 Every method trains the same network, from the same weights, on the same
 batches. What :func:`build_optimizer` returns is the only thing that differs
@@ -26,6 +26,7 @@ from efficient_polling_lr_scheduler import (
     ArmijoSGD,
     EfficientPollingOptimizer,
     EfficientRelativeEpochPolling,
+    EfficientRelativeNarrowingPollingOptimizer,
     EfficientRelativePollingOptimizer,
     PollingOptimizer,
     default_candidate_lrs,
@@ -71,6 +72,7 @@ LABELS = {
     "efficient_random": "  ablation: random trigger",
     "efficient_relative": "Efficient Relative Polling (ours, per batch)",
     "efficient_relative_epoch": "Efficient Relative Polling (ours, per epoch)",
+    "efficient_relative_narrowing": "Efficient Relative Narrowing Polling (ours)",
 }
 
 METHODS = tuple(LABELS)
@@ -166,12 +168,20 @@ class Ablation:
 
 @dataclass
 class EfficientRelative:
-    """Efficient Relative Polling, per batch and per epoch."""
+    """Efficient Relative Polling, per batch and per epoch, and its narrowing variant.
+
+    The narrowing variant shares everything here, the ceiling included, so a
+    round that raises the ceiling raises it for both.
+    """
 
     multiplier: float = 10.0  # {X/m, X, X*m}: one decade apart, like the fixed grid
     # The same 1e-1 ceiling every other method is held to; None lets the window roam.
     lr_max: float | None = 1e-1
     spike_z: float = 3.0  # per batch: deviations above the loss trend that force a poll
+    # Narrowing only: the fraction of the jump, in decades for m = 10, that one
+    # narrowing takes off (0.5 lands on the geometric middle), and how many can pile up.
+    narrowing: float = 0.5
+    max_narrowings: int = 3
 
 
 @dataclass
@@ -244,9 +254,13 @@ def initial_lr(method: str, hyperparameters: Hyperparameters) -> str:
     if method in ("polling", "efficient", *ABLATIONS):
         grid = default_candidate_lrs(t.lr)
         return f"grid {rate_text(grid[0])}–{rate_text(grid[-1])}"
-    if method in ("efficient_relative", "efficient_relative_epoch"):
+    if method in ("efficient_relative", "efficient_relative_epoch", "efficient_relative_narrowing"):
         ceiling = "no ceiling" if r.lr_max is None else f"ceiling {rate_text(r.lr_max)}"
-        return f"{lr}, ×÷{r.multiplier:g}, {ceiling}"
+        jump = f"×÷{r.multiplier:g}"
+        if method == "efficient_relative_narrowing" and r.narrowing > 0 and r.max_narrowings > 0:
+            finest = r.multiplier ** ((1 - r.narrowing) ** r.max_narrowings)
+            jump = f"{jump} down to ×÷{finest:.3g}"
+        return f"{lr}, {jump}, {ceiling}"
     return lr
 
 
@@ -337,6 +351,19 @@ def build_optimizer(
             rollback_loss=blowup_loss(spec),
         )
         return relative, None
+    if method == "efficient_relative_narrowing":
+        r = hyperparameters.relative
+        narrowing = EfficientRelativeNarrowingPollingOptimizer(
+            base(),
+            module=model,
+            multiplier=r.multiplier,
+            lr_max=r.lr_max,
+            spike_z=r.spike_z,
+            rollback_loss=blowup_loss(spec),
+            narrowing=r.narrowing,
+            max_narrowings=r.max_narrowings,
+        )
+        return narrowing, None
     if method == "efficient_relative_epoch":
         # Per epoch the controller drives the plain optimizer; see build_epoch_polling().
         return base(), None

@@ -5,6 +5,7 @@
 - [Polling](#polling-replicated-base-method), the replicated base method
 - [Efficient Polling](#efficient-polling), which polls on demand
 - [Efficient Relative Polling](#efficient-relative-polling), which drops the fixed grid
+- [Efficient Relative Narrowing Polling](#efficient-relative-narrowing-polling), whose jump narrows between two rates
 - [Cost model](#cost-model)
 
 ## Polling (replicated base method)
@@ -73,6 +74,38 @@ optimizer = EfficientRelativePollingSGD(model, lr=1e-3, multiplier=10.0, lr_max=
 | `ℓ_rb` | `2·ln(classes)` | blow-up threshold, as above |
 
 `EfficientRelativeEpochPolling` applies the same window per epoch instead of per batch, driven by `fit(..., epoch_polling=...)`: it trains a whole epoch per candidate from one snapshot and keeps the one with the lowest mean training loss. It is kept as a documented negative result; see [Results](results.md#efficient-relative-polling).
+
+## Efficient Relative Narrowing Polling
+
+Efficient Relative Polling moves the rate a whole multiplier at a time. With `m = 10` it lives on decades, and when the rate a batch wants lies between two of them it hops from one to the other and never tries what lies between. Efficient Relative Narrowing Polling lets the jump `f` itself adapt, starting at `m`:
+
+```
+C_t = {X/f, X, X·f}        f = m^((1 − ν)^d)
+```
+
+`d` counts the narrowings in effect and `ν` is the fraction of the jump, in orders of magnitude, that one narrowing takes off. After every poll with signal, except the one that ends a blind stretch, which only brings a widened window back to `m`:
+
+1. **The winner reversed** (the rate went up and now comes back down, or the other way round): the rate the batch wants lies between the two, so `d` grows by one.
+2. **The centre won:** the rate is bracketed, so `d` grows by one. A centre on `lr_min` or `lr_max` has one neighbour folded into it and brackets nothing, so it leaves `d` alone.
+3. **The winner kept going** the way it moved last: the rate is still far, so `d` shrinks by one, and the jump never gets wider than `m` this way.
+
+The narrowing is soft: one step at a time either way, up to `d_max` steps. A blind poll undoes one narrowing before the window widens past `m` as in Efficient Relative Polling, a restart goes back to `f = m`, and the backoff, the trend and the restarts are unchanged. Products of fractional jumps drift by an ulp or two, so a rate within rounding of a bound counts as on it. With `ν = 0` the method is Efficient Relative Polling, bar that rounding at the bounds.
+
+```python
+from efficient_polling_lr_scheduler import EfficientRelativeNarrowingPollingSGD
+
+optimizer = EfficientRelativeNarrowingPollingSGD(
+    model, lr=1e-3, multiplier=10.0, narrowing=0.5, max_narrowings=3, lr_max=1e-1
+)
+```
+
+| Symbol | Default | Role |
+|---|---|---|
+| `m` | `10` | the widest jump, as in Efficient Relative Polling |
+| `ν` | `0.5` | `narrowing`: fraction of the jump one narrowing takes off; `0.5` puts the next neighbour on the geometric middle, `X·√10` for `m = 10` |
+| `d_max` | `3` | `max_narrowings`: the finest jump is `m^((1 − ν)^d_max)`, `×1.33` with the defaults |
+
+It is experimental: nothing has been run with it beyond a smoke test.
 
 ## Cost model
 

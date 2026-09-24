@@ -5,7 +5,7 @@ this is what compares its methods against the others.
 
 - ``datasets``: the five datasets, read from the files their authors publish.
 - ``models``: the CNN and the MLP every method trains.
-- ``methods``: the thirteen configurations and their hyperparameters.
+- ``methods``: every configuration and its hyperparameters.
 - ``sweep``: runs them over seeds, records each run, reads the records back.
 - ``rounds``: the learning-rate rounds, every method on SGD or Adam from one
   rate, and the ceiling test of SPS and Armijo.

@@ -6,11 +6,36 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-The package itself is unchanged. Everything below is the benchmark around it:
-four more datasets, the runs on them, and a reorganized repository.
+The package gains one method, Efficient Relative Narrowing Polling, and its
+version becomes 3.0.0; nothing that existed in 2.0.0 changed behaviour. The rest
+is the benchmark around it: four more datasets, the runs on them, and a
+reorganized repository.
 
 ### Added
 
+- **Efficient Relative Narrowing Polling** (`EfficientRelativeNarrowingPollingSGD`,
+  `EfficientRelativeNarrowingPollingOptimizer`, in `efficient_relative_narrowing.py`).
+  Efficient Relative Polling moves the rate a whole multiplier at a time, so
+  with `m = 10` it lives on decades and never tries the rate between two of
+  them. Here the jump between the centre and its neighbours adapts after every
+  poll with signal: it narrows when the winner reverses or the centre wins, and
+  widens back when the winner keeps going the way it moved last. A narrowing
+  takes the fraction `narrowing` off the jump in orders of magnitude (`0.5`,
+  the default, puts the next neighbour on the geometric middle; `0` never
+  narrows), `max_narrowings` bounds how many pile up, and a blind poll undoes
+  one before the window widens past `m`; the poll that ends a blind stretch only
+  brings the window back to `m`. A centre on `lr_min` or `lr_max` has one
+  neighbour folded into it, so its win leaves the jump alone, and a rate within
+  rounding of a bound counts as on it, since products of fractional jumps drift
+  by an ulp. The backoff, the trend and the restarts are Efficient Relative
+  Polling's, unchanged, and a restart goes back to the full multiplier.
+  Experimental: nothing has been run with it beyond a smoke test.
+- The benchmark runs it as `efficient_relative_narrowing`, under the same
+  multiplier and ceiling as Efficient Relative Polling: in the main table, in a
+  notebook cell of its own and in the learning-rate study, which gains its rows
+  on SGD and on Adam. `--narrowing` and `--max-narrowings` set it on the
+  command line, and `hyperparameters.relative.narrowing` and `.max_narrowings`
+  in the notebook.
 - CIFAR-100, MNIST, Fashion-MNIST and Covertype next to CIFAR-10, read straight
   from the files their authors publish, with no torchvision and no download
   inside a run. The IDX files are accepted compressed or not, dashed or dotted,

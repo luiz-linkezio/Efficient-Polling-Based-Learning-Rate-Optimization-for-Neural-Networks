@@ -109,6 +109,20 @@ SETTINGS: tuple[tuple[str, str, str, Callable[[str], Any], str], ...] = (
         float,
         "Efficient Relative Polling: deviations above the loss trend that force a poll",
     ),
+    (
+        "--narrowing",
+        "relative",
+        "narrowing",
+        float,
+        "Efficient Relative Narrowing Polling: fraction of the jump one narrowing takes off",
+    ),
+    (
+        "--max-narrowings",
+        "relative",
+        "max_narrowings",
+        int,
+        "Efficient Relative Narrowing Polling: narrowings that can pile up",
+    ),
 )
 
 
