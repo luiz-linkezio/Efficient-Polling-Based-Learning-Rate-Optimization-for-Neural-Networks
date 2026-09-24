@@ -182,6 +182,10 @@ class EfficientRelative:
     # narrowing takes off (0.5 lands on the geometric middle), and how many can pile up.
     narrowing: float = 0.5
     max_narrowings: int = 3
+    # Narrowing only: polls a behaviour has to last before the jump moves, and what a
+    # poll that breaks it takes off that patience, as a fraction of a poll.
+    patience: int = 8
+    break_discount: float = 0.5
 
 
 @dataclass
@@ -362,6 +366,8 @@ def build_optimizer(
             rollback_loss=blowup_loss(spec),
             narrowing=r.narrowing,
             max_narrowings=r.max_narrowings,
+            patience=r.patience,
+            break_discount=r.break_discount,
         )
         return narrowing, None
     if method == "efficient_relative_epoch":

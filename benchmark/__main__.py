@@ -123,6 +123,21 @@ SETTINGS: tuple[tuple[str, str, str, Callable[[str], Any], str], ...] = (
         int,
         "Efficient Relative Narrowing Polling: narrowings that can pile up",
     ),
+    (
+        "--patience",
+        "relative",
+        "patience",
+        int,
+        "Efficient Relative Narrowing Polling: polls a behaviour lasts before the jump moves",
+    ),
+    (
+        "--break-discount",
+        "relative",
+        "break_discount",
+        float,
+        "Efficient Relative Narrowing Polling: what a poll that breaks a behaviour takes off "
+        "its patience, as a fraction of a poll",
+    ),
 )
 
 

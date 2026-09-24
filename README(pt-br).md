@@ -92,7 +92,7 @@ print(history.best_val_acc, sum(history.polls), sum(history.optimizer_steps))
 | `PollingSGD` / `PollingOptimizer` | método base: poll a cada batch |
 | `EfficientRelativePollingSGD` / `EfficientRelativePollingOptimizer` | Efficient Relative Polling (experimental): três candidatos em torno da taxa em uso, backoff sem teto no estilo TCP, restarts a partir do melhor ponto |
 | `EfficientRelativeEpochPolling` | o mesmo método por época, conduzido por `fit(..., epoch_polling=...)` sobre um otimizador comum |
-| `EfficientRelativeNarrowingPollingSGD` / `EfficientRelativeNarrowingPollingOptimizer` | Efficient Relative Narrowing Polling (experimental, ainda sem resultados): o Efficient Relative Polling com um pulo que estreita entre duas taxas quando o vencedor inverte ou o centro ganha, e volta a alargar quando ele segue no mesmo sentido |
+| `EfficientRelativeNarrowingPollingSGD` / `EfficientRelativeNarrowingPollingOptimizer` | Efficient Relative Narrowing Polling (experimental, ainda sem resultados): o Efficient Relative Polling com um pulo que estreita entre duas taxas quando a taxa fica cercada por um tempo, e volta a alargar quando ela segue num sentido só |
 | `SPSSGD` / `SPSOptimizer` | baseline de comparação: Polyak step-size estocástico |
 | `ArmijoSGD` / `ArmijoOptimizer` | baseline de comparação: busca de linha Armijo backtracking estocástica |
 | `TRIGGERS` | os três gatilhos de poll usados na ablação: `"backoff"` (padrão), `"fixed"`, `"random"` |

@@ -83,19 +83,20 @@ O Efficient Relative Polling move a taxa um multiplicador inteiro por vez. Com `
 C_t = {X/f, X, X·f}        f = m^((1 − ν)^d)
 ```
 
-`d` conta os estreitamentos em vigor e `ν` é a fração do pulo, em ordens de grandeza, que um estreitamento tira. Depois de cada poll com sinal, exceto o que encerra um trecho cego, que só traz a janela alargada de volta a `m`:
+`d` conta os estreitamentos em vigor e `ν` é a fração do pulo, em ordens de grandeza, que um estreitamento tira. `d` muda quando um comportamento dos polls se mantém, nunca por um poll isolado:
 
-1. **O vencedor inverteu** (a taxa subiu e agora volta a descer, ou o contrário): a taxa que o batch quer fica entre as duas, então `d` cresce um.
-2. **O centro ganhou:** a taxa está cercada, então `d` cresce um. Um centro em `lr_min` ou `lr_max` tem um vizinho dobrado sobre ele e não cerca nada, então deixa `d` como está.
-3. **O vencedor seguiu** no sentido em que se moveu da última vez: a taxa ainda está longe, então `d` diminui um, e o pulo nunca fica mais largo que `m` por esse caminho.
+1. **A taxa está cercada:** o centro ganha, ou o vencedor inverte (sobe depois de descer, ou desce depois de subir). Os dois são um comportamento só: com `{10¹, 10², 10³}`, `10²` ganhar sempre diz o mesmo que uma oscilação entre `10¹` e `10³`. Um cerco que se mantém é um platô, e o pulo estreita (`d + 1`) para olhar entre os candidatos.
+2. **A taxa segue num sentido:** o vencedor se move no mesmo sentido da última mudança, só subindo ou só descendo. Uma sequência que se mantém quer dizer que a taxa ainda está longe, e o pulo volta a alargar (`d − 1`) dos dois lados, para buscar num range maior, nunca além de `m`.
 
-O estreitamento é suave: um passo por vez nos dois sentidos, até `d_max` passos. Um poll cego desfaz um estreitamento antes de a janela alargar além de `m` como no Efficient Relative Polling, um restart volta para `f = m`, e o backoff, a tendência e os restarts não mudam. Produtos de pulos fracionários desviam um ou dois ulps, então uma taxa a um arredondamento de um limite conta como estando nele. Com `ν = 0` o método é o Efficient Relative Polling, salvo esse arredondamento nos limites.
+Cada comportamento tem uma paciência contada em polls, `p_n` para estreitar e `p_w` para alargar, as duas começando em `p₀`. Um poll de um comportamento tira um poll inteiro da própria paciência e `ρ` de um poll da outra: um poll que quebra a tendência desacelera a contagem sem devolver o que já foi gasto, então um poll perdido não desfaz um platô que está se formando. Quando uma paciência chega a zero, `d` anda um passo (a não ser que já esteja em `0` ou em `d_max`) e as duas paciências recomeçam de `p₀`. A paciência é um contador diferente do intervalo de poll `k` do backoff, que não muda: `k` decide quando fazer poll, `p_n` e `p_w` com que resolução.
+
+Um empate (todos os candidatos com a mesma pontuação) com o pulo estreitado diz que o pulo ficou fino demais para distinguir os candidatos, e conta como poll de alargamento; em `m` o empate alarga a janela na hora, como no Efficient Relative Polling. Um centro em `lr_min` ou `lr_max` tem um vizinho dobrado sobre ele e não cerca nada, então a vitória dele não conta para nenhum comportamento, nem o poll que encerra um trecho cego, que só traz a janela de volta a `m`. Um restart volta para `f = m` com as paciências cheias. Produtos de pulos fracionários desviam um ou dois ulps, então uma taxa a um arredondamento de um limite conta como estando nele. Com `ν = 0` o método é o Efficient Relative Polling, salvo esse arredondamento nos limites.
 
 ```python
 from efficient_polling_lr_scheduler import EfficientRelativeNarrowingPollingSGD
 
 optimizer = EfficientRelativeNarrowingPollingSGD(
-    model, lr=1e-3, multiplier=10.0, narrowing=0.5, max_narrowings=3, lr_max=1e-1
+    model, lr=1e-3, multiplier=10.0, narrowing=0.5, patience=8, lr_max=1e-1
 )
 ```
 
@@ -104,6 +105,8 @@ optimizer = EfficientRelativeNarrowingPollingSGD(
 | `m` | `10` | o pulo mais largo, como no Efficient Relative Polling |
 | `ν` | `0.5` | `narrowing`: fração do pulo que um estreitamento tira; `0.5` põe o próximo vizinho no meio geométrico, `X·√10` para `m = 10` |
 | `d_max` | `3` | `max_narrowings`: o pulo mais fino é `m^((1 − ν)^d_max)`, `×1,33` com os padrões |
+| `p₀` | `8` | `patience`: polls que um comportamento precisa durar para o pulo andar um passo |
+| `ρ` | `0.5` | `break_discount`: quanto um poll que quebra o comportamento tira da paciência dele, como fração de um poll, em `[0, 1)` |
 
 É experimental: nada foi rodado com ele além de um teste de fumaça.
 

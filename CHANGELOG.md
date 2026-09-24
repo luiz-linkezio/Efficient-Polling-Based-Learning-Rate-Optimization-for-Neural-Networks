@@ -17,25 +17,31 @@ reorganized repository.
   `EfficientRelativeNarrowingPollingOptimizer`, in `efficient_relative_narrowing.py`).
   Efficient Relative Polling moves the rate a whole multiplier at a time, so
   with `m = 10` it lives on decades and never tries the rate between two of
-  them. Here the jump between the centre and its neighbours adapts after every
-  poll with signal: it narrows when the winner reverses or the centre wins, and
-  widens back when the winner keeps going the way it moved last. A narrowing
-  takes the fraction `narrowing` off the jump in orders of magnitude (`0.5`,
-  the default, puts the next neighbour on the geometric middle; `0` never
-  narrows), `max_narrowings` bounds how many pile up, and a blind poll undoes
-  one before the window widens past `m`; the poll that ends a blind stretch only
-  brings the window back to `m`. A centre on `lr_min` or `lr_max` has one
-  neighbour folded into it, so its win leaves the jump alone, and a rate within
-  rounding of a bound counts as on it, since products of fractional jumps drift
-  by an ulp. The backoff, the trend and the restarts are Efficient Relative
-  Polling's, unchanged, and a restart goes back to the full multiplier.
+  them. Here the jump between the centre and its neighbours adapts to what the
+  polls keep showing. A lasting bracket (the centre winning, or the winner
+  reversing, which is the same behaviour) narrows it, to look between the
+  candidates; a lasting run in one direction widens it back on both sides,
+  never past `m`. Each behaviour has a patience counted in polls (`patience`,
+  8 by default); a poll of the other behaviour takes `break_discount` (0.5,
+  below 1) of a poll off it instead of refilling it, and when a patience runs
+  out the jump moves one step, if it can, and both patiences start again. The patiences are a counter
+  of their own, apart from the backoff's poll interval `k`. A narrowing takes
+  the fraction `narrowing` off the jump in orders of magnitude (`0.5` puts the
+  next neighbour on the geometric middle; `0` never narrows), and
+  `max_narrowings` bounds how many pile up. A tie on a narrowed jump counts
+  toward widening; at `m` it widens the window at once, as before. A centre on
+  `lr_min` or `lr_max` has one neighbour folded into it, so its win counts for
+  neither behaviour, and a rate within rounding of a bound counts as on it,
+  since products of fractional jumps drift by an ulp. The backoff, the trend
+  and the restarts are Efficient Relative Polling's, unchanged, and a restart
+  goes back to the full multiplier with fresh patiences.
   Experimental: nothing has been run with it beyond a smoke test.
 - The benchmark runs it as `efficient_relative_narrowing`, under the same
   multiplier and ceiling as Efficient Relative Polling: in the main table, in a
   notebook cell of its own and in the learning-rate study, which gains its rows
-  on SGD and on Adam. `--narrowing` and `--max-narrowings` set it on the
-  command line, and `hyperparameters.relative.narrowing` and `.max_narrowings`
-  in the notebook.
+  on SGD and on Adam. `--narrowing`, `--max-narrowings`, `--patience`
+  and `--break-discount` set it on the command line, and the fields of the same
+  names under `hyperparameters.relative` in the notebook.
 - CIFAR-100, MNIST, Fashion-MNIST and Covertype next to CIFAR-10, read straight
   from the files their authors publish, with no torchvision and no download
   inside a run. The IDX files are accepted compressed or not, dashed or dotted,
