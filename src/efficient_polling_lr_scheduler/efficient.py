@@ -89,6 +89,8 @@ class EfficientPollingOptimizer(PollingOptimizer):
             CIFAR-10's ten classes, the value used in the paper. Pass a float to
             pin it exactly.
         rollback_factor: multiplier for the derived threshold.
+        criterion: what ranks the trials, the closure's score or its loss. See
+            :class:`PollingOptimizer`.
     """
 
     def __init__(
@@ -105,8 +107,9 @@ class EfficientPollingOptimizer(PollingOptimizer):
         trigger: str = "backoff",
         poll_probability: float = 0.05,
         poll_seed: int = 0,
+        criterion: str = "score",
     ) -> None:
-        super().__init__(optimizer, candidate_lrs=candidate_lrs, module=module)
+        super().__init__(optimizer, candidate_lrs=candidate_lrs, module=module, criterion=criterion)
 
         if max_poll_interval < 0:
             raise ValueError(f"max_poll_interval must be >= 0, got {max_poll_interval}")
@@ -332,7 +335,7 @@ class EfficientPollingSGD(EfficientPollingOptimizer):
     (``momentum``, ``weight_decay``, ``nesterov``, ``dampening``) or the polling
     schedule (``max_poll_interval``, ``spike_factor``, ``loss_ema_beta``,
     ``rollback_loss``, ``rollback_factor``, ``trigger``, ``poll_probability``,
-    ``poll_seed``).
+    ``poll_seed``, ``criterion``).
     """
 
     _SGD_KEYS = _SGD_KEYS

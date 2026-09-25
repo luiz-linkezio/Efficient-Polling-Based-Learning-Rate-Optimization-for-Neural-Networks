@@ -29,9 +29,11 @@ interval ``k`` of the backoff, which is untouched: ``k`` decides when to poll,
 Nothing caps the narrowings by default. A plateau that lasts keeps narrowing the
 jump, and what stops it is the polls themselves: candidates too close for the
 criterion to tell apart tie, and a tie on a narrowed jump counts toward
-widening. ``max_narrowings`` sets a cap when one is wanted. The one limit that
-always holds is numerical: a narrowing that would put the neighbours within
-rounding of the centre does not happen, since the poll would try one rate.
+widening. Scored by loss (``criterion="loss"``) the candidates almost never
+tie, so only runs widen the jump back. ``max_narrowings`` sets a cap when one
+is wanted. The one limit that always holds is numerical: a narrowing that would
+put the neighbours within rounding of the centre does not happen, since the
+poll would try one rate.
 
 A step is soft: a narrowing takes a fraction ``narrowing`` off the jump,
 measured in orders of magnitude, ``f -> f ** (1 - narrowing)``, and a widening
@@ -326,7 +328,7 @@ class EfficientRelativeNarrowingPollingOptimizer(EfficientRelativePollingOptimiz
     Remaining keyword arguments are those of
     :class:`~efficient_polling_lr_scheduler.efficient_relative.EfficientRelativePollingOptimizer`:
     ``multiplier`` is the widest jump, ``lr_min`` and ``lr_max`` the optional
-    bounds, and so on.
+    bounds, ``criterion`` what ranks the trials, and so on.
     """
 
     window: NarrowingWindow
@@ -379,7 +381,8 @@ class EfficientRelativeNarrowingPollingOptimizer(EfficientRelativePollingOptimiz
             f"{type(self).__name__}(optimizer={type(self.optimizer).__name__}, "
             f"lr={self.lr}, multiplier={self.multiplier}, narrowing={self.narrowing}, "
             f"max_narrowings={self.max_narrowings}, patience={self.patience}, "
-            f"break_discount={self.break_discount}, lr_min={self.lr_min}, lr_max={self.lr_max})"
+            f"break_discount={self.break_discount}, lr_min={self.lr_min}, lr_max={self.lr_max}, "
+            f"criterion={self.criterion!r})"
         )
 
 

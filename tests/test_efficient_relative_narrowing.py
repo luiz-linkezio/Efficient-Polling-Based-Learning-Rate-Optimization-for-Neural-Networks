@@ -700,16 +700,26 @@ def test_the_general_optimizer_wraps_any_optimizer() -> None:
 
 def test_the_sgd_class_forwards_sgd_settings() -> None:
     poller = EfficientRelativeNarrowingPollingSGD(
-        TinyNet(), lr=1e-2, momentum=0.9, narrowing=0.3, patience=3, break_discount=0.25
+        TinyNet(),
+        lr=1e-2,
+        momentum=0.9,
+        narrowing=0.3,
+        patience=3,
+        break_discount=0.25,
+        criterion="loss",
     )
     assert poller.optimizer.param_groups[0]["momentum"] == 0.9
+    assert "criterion" not in poller.optimizer.param_groups[0]
     assert poller.narrowing == 0.3
     assert poller.patience == 3
     assert poller.break_discount == 0.25
     assert poller.max_narrowings is None
+    assert poller.criterion == "loss"
     assert "narrowing=0.3" in repr(poller)
     assert "patience=3" in repr(poller)
     assert "break_discount=0.25" in repr(poller)
+    assert "criterion='loss'" in repr(poller)
+    assert EfficientRelativeNarrowingPollingSGD(TinyNet()).criterion == "score"
 
 
 def test_rejects_a_bad_narrowing(model: TinyNet) -> None:

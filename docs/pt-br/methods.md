@@ -92,6 +92,8 @@ Cada comportamento tem uma paciência contada em polls, `p_n` para estreitar e `
 
 Um empate (todos os candidatos com a mesma pontuação) com o pulo estreitado diz que o pulo ficou fino demais para distinguir os candidatos, e conta como poll de alargamento; em `m` o empate alarga a janela na hora, como no Efficient Relative Polling. Por padrão nada limita os estreitamentos: um platô que se mantém continua estreitando o pulo, e quem para isso são os empates. O único limite que sempre vale é o numérico, já que um estreitamento que poria os vizinhos a um arredondamento do centro não acontece. Um centro em `lr_min` ou `lr_max` tem um vizinho dobrado sobre ele e não cerca nada, então a vitória dele não conta para nenhum comportamento, nem o poll que encerra um trecho cego, que só traz a janela de volta a `m`. Um restart volta para `f = m` com as paciências cheias. Produtos de pulos fracionários desviam um ou dois ulps, então uma taxa a um arredondamento de um limite conta como estando nele. Com `ν = 0` o método é o Efficient Relative Polling, salvo esse arredondamento nos limites.
 
+O poll também pode ranquear os testes pela loss do batch em vez da acurácia do batch (`criterion="loss"`, em todo otimizador com poll por batch; `--criterion loss` no benchmark, para o Efficient Relative Polling por batch e esta variante). A loss é contínua, então ainda distingue passos de teste próximos demais para mudar uma única previsão, e os candidatos quase nunca empatam: pela loss, os empates deixam de puxar o pulo de volta, e só as sequências num sentido só o alargam. A acurácia continua sendo o número reportado e o que escolhe o checkpoint.
+
 ```python
 from efficient_polling_lr_scheduler import EfficientRelativeNarrowingPollingSGD
 
@@ -107,6 +109,7 @@ optimizer = EfficientRelativeNarrowingPollingSGD(
 | `d_max` | nenhum | `max_narrowings`: limite opcional dos estreitamentos, que faz o pulo mais fino ser `m^((1 − ν)^d_max)`; `3` com os outros padrões para em `×1,33` |
 | `p₀` | `8` | `patience`: polls que um comportamento precisa durar para o pulo andar um passo |
 | `ρ` | `0.5` | `break_discount`: quanto um poll que quebra o comportamento tira da paciência dele, como fração de um poll, em `[0, 1)` |
+| | `"score"` | `criterion`: o que ranqueia os testes, a pontuação da closure (acurácia do batch) ou, com `"loss"`, a loss do batch |
 
 É experimental: nada foi rodado com ele além de um teste de fumaça.
 

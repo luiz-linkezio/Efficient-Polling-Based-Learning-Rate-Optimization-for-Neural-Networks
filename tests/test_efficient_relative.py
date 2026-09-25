@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import math
 
 import pytest
@@ -563,6 +564,24 @@ def test_polls_a_small_fraction_of_batches_once_there_is_signal(loss_fn) -> None
     assert sum(i.polled for i in infos) / len(infos) < 0.15
     assert max(i.poll_interval for i in infos) > 64
     assert not any(i.rolled_back for i in infos)
+
+
+def test_scored_by_loss_a_poll_the_accuracy_calls_blind_has_signal(batch, loss_fn) -> None:
+    """On 8-sample batches the first poll ties on accuracy; the loss tells the trials apart."""
+    inputs, targets = batch
+    model = TinyNet()
+    twin = copy.deepcopy(model)
+    by_score = EfficientRelativePollingSGD(model, lr=1e-3)
+    by_loss = EfficientRelativePollingSGD(twin, lr=1e-3, criterion="loss")
+
+    blind = by_score.step(make_closure(model, loss_fn, inputs, targets))
+    seen = by_loss.step(make_closure(twin, loss_fn, inputs, targets))
+
+    assert blind.polled and not blind.had_signal
+    assert seen.polled and seen.had_signal
+    assert seen.lr == pytest.approx(1e-2)  # a longer step down this batch's gradient
+    assert by_loss.criterion == "loss"
+    assert "criterion='loss'" in repr(by_loss)
 
 
 def test_selects_by_real_batch_accuracy(batch, loss_fn) -> None:

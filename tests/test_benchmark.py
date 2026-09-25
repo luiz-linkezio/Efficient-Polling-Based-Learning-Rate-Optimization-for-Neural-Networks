@@ -381,6 +381,23 @@ def test_a_negative_cap_on_the_narrowings_is_refused_up_front() -> None:
         parse_args(["--data-dir", "/nowhere", "--max-narrowings", "-1"])
 
 
+@pytest.mark.parametrize("method", ["efficient_relative", "efficient_relative_narrowing"])
+def test_the_criterion_reaches_both_per_batch_relative_optimizers(method: str) -> None:
+    optimizer, _ = optimizer_for(method, "cifar10")
+    assert optimizer.criterion == "score"
+    args = parse_args(["--data-dir", "/nowhere", "--criterion", "loss"])
+    hyperparameters = build_experiment(args).hyperparameters
+
+    assert hyperparameters.relative.criterion == "loss"
+    optimizer, _ = optimizer_for(method, "cifar10", hyperparameters)
+    assert optimizer.criterion == "loss"
+
+
+def test_an_unknown_criterion_is_refused_up_front() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--data-dir", "/nowhere", "--criterion", "accuracy"])
+
+
 def test_a_cap_on_the_narrowings_names_the_finest_jump() -> None:
     hyperparameters = Hyperparameters()
     hyperparameters.relative.max_narrowings = 3

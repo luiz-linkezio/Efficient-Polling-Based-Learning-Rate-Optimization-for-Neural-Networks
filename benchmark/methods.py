@@ -178,6 +178,9 @@ class EfficientRelative:
     # The same 1e-1 ceiling every other method is held to; None lets the window roam.
     lr_max: float | None = 1e-1
     spike_z: float = 3.0  # per batch: deviations above the loss trend that force a poll
+    # Per batch: what a poll ranks its trials by, the batch accuracy ("score") or
+    # the batch loss ("loss"), which still tells apart jumps too fine for accuracy.
+    criterion: str = "score"
     # Narrowing only: the fraction of the jump, in decades for m = 10, that one
     # narrowing takes off (0.5 lands on the geometric middle), and an optional cap on
     # how many can pile up; None sets no cap.
@@ -357,6 +360,7 @@ def build_optimizer(
             lr_max=r.lr_max,
             spike_z=r.spike_z,
             rollback_loss=blowup_loss(spec),
+            criterion=r.criterion,
         )
         return relative, None
     if method == "efficient_relative_narrowing":
@@ -368,6 +372,7 @@ def build_optimizer(
             lr_max=r.lr_max,
             spike_z=r.spike_z,
             rollback_loss=blowup_loss(spec),
+            criterion=r.criterion,
             narrowing=r.narrowing,
             max_narrowings=r.max_narrowings,
             patience=r.patience,

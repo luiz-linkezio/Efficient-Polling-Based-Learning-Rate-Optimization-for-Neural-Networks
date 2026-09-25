@@ -92,6 +92,8 @@ Each behaviour has a patience counted in polls, `p_n` for narrowing and `p_w` fo
 
 A tie (every candidate scoring the same) on a narrowed jump says the jump is too fine to tell the candidates apart, and counts as a poll for widening; at `m` a tie widens the window at once, as in Efficient Relative Polling. Nothing caps the narrowings by default: a plateau that lasts keeps narrowing the jump, and the ties are what stop it. The one limit that always holds is numerical, since a narrowing that would put the neighbours within rounding of the centre does not happen. A centre on `lr_min` or `lr_max` has one neighbour folded into it and brackets nothing, so its win counts for neither behaviour, and neither does the poll that ends a blind stretch, which only brings the window back to `m`. A restart goes back to `f = m` with fresh patiences. Products of fractional jumps drift by an ulp or two, so a rate within rounding of a bound counts as on it. With `ν = 0` the method is Efficient Relative Polling, bar that rounding at the bounds.
 
+The poll can also rank its trials by the batch loss instead of the batch accuracy (`criterion="loss"`, on every per-batch polling optimizer; `--criterion loss` in the benchmark, for Efficient Relative Polling per batch and this variant). The loss is continuous, so it still tells apart trial steps too close to change a single prediction, and the candidates almost never tie: scored by loss, the ties no longer pull the jump back, and only runs widen it. The accuracy is still what gets reported and what picks the checkpoint.
+
 ```python
 from efficient_polling_lr_scheduler import EfficientRelativeNarrowingPollingSGD
 
@@ -107,6 +109,7 @@ optimizer = EfficientRelativeNarrowingPollingSGD(
 | `d_max` | none | `max_narrowings`: optional cap on the narrowings, which makes the finest jump `m^((1 − ν)^d_max)`; `3` with the other defaults stops at `×1.33` |
 | `p₀` | `8` | `patience`: polls a behaviour has to last before the jump moves a step |
 | `ρ` | `0.5` | `break_discount`: what a poll that breaks a behaviour takes off its patience, as a fraction of a poll, in `[0, 1)` |
+| | `"score"` | `criterion`: what ranks the trials, the closure's score (batch accuracy) or, with `"loss"`, the batch loss |
 
 It is experimental: nothing has been run with it beyond a smoke test.
 

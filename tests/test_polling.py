@@ -294,3 +294,93 @@ def test_a_trial_with_a_non_finite_loss_loses_the_poll(batch) -> None:
     result = poller.poll(exploding)
     assert result.lr == 1e-4
     assert result.had_signal
+
+
+# -- the criterion: score or loss ---------------------------------------------
+
+
+def ranked(model, optimizer, inputs, losses: dict[float, float], scores: dict[float, float]):
+    """A closure reporting the loss and score the test dictates for each rate under trial."""
+
+    def closure():
+        raw = model(inputs).square().sum()
+        lr = float(optimizer.param_groups[0]["lr"])
+        # Real gradients, but a reported loss value the test controls.
+        return raw - raw.detach() + losses.get(lr, 1.0), scores.get(lr, 0.0)
+
+    return closure
+
+
+def polled(poller: PollingSGD, closure):
+    poller.optimizer.zero_grad()
+    loss, _ = closure()
+    loss.backward()
+    return poller.poll(closure)
+
+
+def test_the_criterion_is_the_score_by_default(model: TinyNet) -> None:
+    assert PollingSGD(model).criterion == "score"
+
+
+def test_a_loss_criterion_picks_the_lowest_loss_and_still_reports_the_score(batch) -> None:
+    inputs, _ = batch
+    model = TinyNet()
+    losses = {1e-4: 0.25, 1e-3: 1.0, 1e-2: 0.5}
+    scores = {1e-4: 0.0, 1e-3: 0.5, 1e-2: 1.0}
+    by_score = PollingSGD(model, lr=1e-3, candidate_lrs=(1e-4, 1e-3, 1e-2))
+    by_loss = PollingSGD(model, lr=1e-3, candidate_lrs=(1e-4, 1e-3, 1e-2), criterion="loss")
+
+    assert polled(by_score, ranked(model, by_score.optimizer, inputs, losses, scores)).lr == 1e-2
+    result = polled(by_loss, ranked(model, by_loss.optimizer, inputs, losses, scores))
+    assert result.lr == 1e-4
+    assert result.post_loss == pytest.approx(0.25)
+    assert result.post_score == 0.0  # the winner's score, not its rank
+    assert result.decisive
+
+
+def test_a_loss_criterion_tells_apart_trials_the_score_ties(batch) -> None:
+    inputs, _ = batch
+    model = TinyNet()
+    losses = {1e-4: 1.0, 1e-3: 0.75, 1e-2: 0.5}
+    by_score = PollingSGD(model, lr=1e-3, candidate_lrs=(1e-4, 1e-3, 1e-2))
+    by_loss = PollingSGD(model, lr=1e-3, candidate_lrs=(1e-4, 1e-3, 1e-2), criterion="loss")
+
+    tied = polled(by_score, ranked(model, by_score.optimizer, inputs, losses, {}))
+    seen = polled(by_loss, ranked(model, by_loss.optimizer, inputs, losses, {}))
+    assert (tied.lr, tied.had_signal) == (1e-4, False)
+    assert (seen.lr, seen.had_signal) == (1e-2, True)
+
+
+def test_equal_losses_tie_to_the_earlier_candidate(batch) -> None:
+    inputs, _ = batch
+    model = TinyNet()
+    poller = PollingSGD(model, lr=1e-3, candidate_lrs=(1e-4, 1e-3, 1e-2), criterion="loss")
+    closure = ranked(model, poller.optimizer, inputs, {}, {1e-2: 1.0})  # every loss 1.0
+
+    result = polled(poller, closure)
+    assert result.lr == 1e-4
+    assert not result.had_signal
+    assert not result.decisive
+
+
+@pytest.mark.parametrize("broken", [float("nan"), float("inf")])
+def test_a_trial_with_a_non_finite_loss_loses_under_the_loss_criterion(batch, broken) -> None:
+    inputs, _ = batch
+    model = TinyNet()
+    poller = PollingSGD(model, lr=1e-3, candidate_lrs=(1e-4, 1e-3, 1e-2), criterion="loss")
+    losses = {1e-4: broken, 1e-3: 1.0, 1e-2: 1.0}
+
+    result = polled(poller, ranked(model, poller.optimizer, inputs, losses, {1e-4: 1.0}))
+    assert result.lr == 1e-3
+    assert result.had_signal  # the broken trial is a disagreement, as under the score
+
+
+def test_rejects_an_unknown_criterion(model: TinyNet) -> None:
+    with pytest.raises(ValueError, match="criterion"):
+        PollingSGD(model, criterion="accuracy")
+
+
+def test_the_sgd_class_keeps_the_criterion_out_of_sgd(model: TinyNet) -> None:
+    poller = PollingSGD(model, lr=1e-3, momentum=0.9, criterion="loss")
+    assert poller.criterion == "loss"
+    assert "criterion" not in poller.optimizer.param_groups[0]

@@ -369,6 +369,10 @@ class EfficientRelativePollingOptimizer(PollingOptimizer):
         rollback_loss: absolute blow-up threshold. ``None`` derives it as
             ``rollback_factor`` times the first observed loss.
         rollback_factor: multiplier for the derived threshold.
+        criterion: what ranks the trials, the closure's score or its loss. See
+            :class:`~efficient_polling_lr_scheduler.polling.PollingOptimizer`.
+            Losses almost never tie, so scored by loss a poll is blind only
+            when the trial steps are too small to move the loss at all.
     """
 
     def __init__(
@@ -387,6 +391,7 @@ class EfficientRelativePollingOptimizer(PollingOptimizer):
         max_reach: int = 6,
         rollback_loss: float | None = None,
         rollback_factor: float = 2.0,
+        criterion: str = "score",
     ) -> None:
         if not isinstance(optimizer, Optimizer):
             raise TypeError(
@@ -396,7 +401,7 @@ class EfficientRelativePollingOptimizer(PollingOptimizer):
             raise ValueError("optimizer has no parameter groups")
         lr = float(optimizer.param_groups[0]["lr"])
         # The fixed candidate set is a formality here: every poll builds its own.
-        super().__init__(optimizer, candidate_lrs=(lr,), module=module)
+        super().__init__(optimizer, candidate_lrs=(lr,), module=module, criterion=criterion)
 
         self.window = Window(multiplier, lr_min, lr_max, max_reach)
         _check_bounds(lr, self.window.lr_min, self.window.lr_max)
@@ -602,7 +607,7 @@ class EfficientRelativePollingOptimizer(PollingOptimizer):
         return (
             f"{type(self).__name__}(optimizer={type(self.optimizer).__name__}, "
             f"lr={self.lr}, multiplier={self.multiplier}, "
-            f"lr_min={self.lr_min}, lr_max={self.lr_max})"
+            f"lr_min={self.lr_min}, lr_max={self.lr_max}, criterion={self.criterion!r})"
         )
 
 
@@ -619,7 +624,7 @@ class EfficientRelativePollingSGD(EfficientRelativePollingOptimizer):
     (``momentum``, ``weight_decay``, ``nesterov``, ``dampening``) or the polling
     (``multiplier``, ``lr_min``, ``lr_max``, ``spike_z``, ``blowup_z``,
     ``trend_betas``, ``best_beta``, ``warmup``, ``max_reach``, ``rollback_loss``,
-    ``rollback_factor``).
+    ``rollback_factor``, ``criterion``).
     """
 
     def __init__(

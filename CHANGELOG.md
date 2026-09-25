@@ -38,6 +38,13 @@ reorganized repository.
   and the restarts are Efficient Relative Polling's, unchanged, and a restart
   goes back to the full multiplier with fresh patiences.
   Experimental: nothing has been run with it beyond a smoke test.
+- `criterion` on every per-batch polling optimizer: `"score"`, the default and
+  the behaviour so far, ranks the trials by the score the closure returns
+  (batch accuracy); `"loss"` ranks them by the batch loss, which is continuous
+  and so tells apart trial steps too close to change a single prediction. The
+  score is still what gets reported. `CRITERIA` lists the two. The benchmark
+  sets it with `--criterion` for Efficient Relative Polling per batch and its
+  narrowing variant.
 - The benchmark runs it as `efficient_relative_narrowing`, under the same
   multiplier and ceiling as Efficient Relative Polling: in the main table, in a
   notebook cell of its own and in the learning-rate study, which gains its rows
