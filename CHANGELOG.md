@@ -6,11 +6,51 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-The package itself is unchanged. Everything below is the benchmark around it:
-four more datasets, the runs on them, and a reorganized repository.
+The package gains one method, Efficient Relative Narrowing Polling, and its
+version becomes 3.0.0; nothing that existed in 2.0.0 changed behaviour. The rest
+is the benchmark around it: four more datasets, the runs on them, and a
+reorganized repository.
 
 ### Added
 
+- **Efficient Relative Narrowing Polling** (`EfficientRelativeNarrowingPollingSGD`,
+  `EfficientRelativeNarrowingPollingOptimizer`, in `efficient_relative_narrowing.py`).
+  Efficient Relative Polling moves the rate a whole multiplier at a time, so
+  with `m = 10` it lives on decades and never tries the rate between two of
+  them. Here the jump between the centre and its neighbours adapts to what the
+  polls keep showing. A lasting bracket (the centre winning, or the winner
+  reversing, which is the same behaviour) narrows it, to look between the
+  candidates; a lasting run in one direction widens it back on both sides,
+  never past `m`. Each behaviour has a patience counted in polls (`patience`,
+  8 by default); a poll of the other behaviour takes `break_discount` (0.5,
+  below 1) of a poll off it instead of refilling it, and when a patience runs
+  out the jump moves one step, if it can, and both patiences start again. The patiences are a counter
+  of their own, apart from the backoff's poll interval `k`. A narrowing takes
+  the fraction `narrowing` off the jump in orders of magnitude (`0.5` puts the
+  next neighbour on the geometric middle; `0` never narrows), and
+  `max_narrowings` optionally caps how many pile up. By default nothing does:
+  a lasting plateau keeps narrowing the jump until the candidates tie, short of
+  the neighbours rounding onto the centre. A tie on a narrowed jump counts
+  toward widening; at `m` it widens the window at once, as before. A centre on
+  `lr_min` or `lr_max` has one neighbour folded into it, so its win counts for
+  neither behaviour, and a rate within rounding of a bound counts as on it,
+  since products of fractional jumps drift by an ulp. The backoff, the trend
+  and the restarts are Efficient Relative Polling's, unchanged, and a restart
+  goes back to the full multiplier with fresh patiences.
+  Experimental: nothing has been run with it beyond a smoke test.
+- `criterion` on every per-batch polling optimizer: `"score"`, the default and
+  the behaviour so far, ranks the trials by the score the closure returns
+  (batch accuracy); `"loss"` ranks them by the batch loss, which is continuous
+  and so tells apart trial steps too close to change a single prediction. The
+  score is still what gets reported. `CRITERIA` lists the two. The benchmark
+  sets it with `--criterion` for Efficient Relative Polling per batch and its
+  narrowing variant.
+- The benchmark runs it as `efficient_relative_narrowing`, under the same
+  multiplier and ceiling as Efficient Relative Polling: in the main table, in a
+  notebook cell of its own and in the learning-rate study, which gains its rows
+  on SGD and on Adam. `--narrowing`, `--max-narrowings`, `--patience`
+  and `--break-discount` set it on the command line, and the fields of the same
+  names under `hyperparameters.relative` in the notebook.
 - CIFAR-100, MNIST, Fashion-MNIST and Covertype next to CIFAR-10, read straight
   from the files their authors publish, with no torchvision and no download
   inside a run. The IDX files are accepted compressed or not, dashed or dotted,

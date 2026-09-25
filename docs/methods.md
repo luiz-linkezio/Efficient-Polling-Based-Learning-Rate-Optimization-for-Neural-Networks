@@ -5,6 +5,7 @@
 - [Polling](#polling-replicated-base-method), the replicated base method
 - [Efficient Polling](#efficient-polling), which polls on demand
 - [Efficient Relative Polling](#efficient-relative-polling), which drops the fixed grid
+- [Efficient Relative Narrowing Polling](#efficient-relative-narrowing-polling), whose jump narrows between two rates
 - [Cost model](#cost-model)
 
 ## Polling (replicated base method)
@@ -73,6 +74,44 @@ optimizer = EfficientRelativePollingSGD(model, lr=1e-3, multiplier=10.0, lr_max=
 | `ℓ_rb` | `2·ln(classes)` | blow-up threshold, as above |
 
 `EfficientRelativeEpochPolling` applies the same window per epoch instead of per batch, driven by `fit(..., epoch_polling=...)`: it trains a whole epoch per candidate from one snapshot and keeps the one with the lowest mean training loss. It is kept as a documented negative result; see [Results](results.md#efficient-relative-polling).
+
+## Efficient Relative Narrowing Polling
+
+Efficient Relative Polling moves the rate a whole multiplier at a time. With `m = 10` it lives on decades, and when the rate a batch wants lies between two of them it hops from one to the other and never tries what lies between. Efficient Relative Narrowing Polling lets the jump `f` itself adapt, starting at `m`:
+
+```
+C_t = {X/f, X, X·f}        f = m^((1 − ν)^d)
+```
+
+`d` counts the narrowings in effect and `ν` is the fraction of the jump, in orders of magnitude, that one narrowing takes off. `d` moves when a behaviour of the polls lasts, never on a single poll:
+
+1. **The rate is bracketed:** the centre wins, or the winner reverses (up after a move down, or down after a move up). The two are one behaviour: with `{10¹, 10², 10³}`, `10²` winning every time says what an oscillation between `10¹` and `10³` says. A lasting bracket is a plateau, and the jump narrows (`d + 1`), to look between the candidates.
+2. **The rate keeps going:** the winner moves the same way as the last move, only up or only down. A lasting run means the rate is still far, and the jump widens back (`d − 1`) on both sides, to search a wider range, never wider than `m`.
+
+Each behaviour has a patience counted in polls, `p_n` for narrowing and `p_w` for widening, both starting at `p₀`. A poll of one behaviour takes a whole poll off its own patience and `ρ` of a poll off the other's: a poll that breaks a trend slows its countdown without giving back what was spent, so a stray poll cannot undo a plateau that is forming. When a patience reaches zero, `d` moves one step (unless it is already at `0`, or at `d_max` when one is set) and both patiences start again from `p₀`. The patience is a different counter from the backoff's poll interval `k`, which is unchanged: `k` decides when to poll, `p_n` and `p_w` how finely.
+
+A tie (every candidate scoring the same) on a narrowed jump says the jump is too fine to tell the candidates apart, and counts as a poll for widening; at `m` a tie widens the window at once, as in Efficient Relative Polling. Nothing caps the narrowings by default: a plateau that lasts keeps narrowing the jump, and the ties are what stop it. The one limit that always holds is numerical, since a narrowing that would put the neighbours within rounding of the centre does not happen. A centre on `lr_min` or `lr_max` has one neighbour folded into it and brackets nothing, so its win counts for neither behaviour, and neither does the poll that ends a blind stretch, which only brings the window back to `m`. A restart goes back to `f = m` with fresh patiences. Products of fractional jumps drift by an ulp or two, so a rate within rounding of a bound counts as on it. With `ν = 0` the method is Efficient Relative Polling, bar that rounding at the bounds.
+
+The poll can also rank its trials by the batch loss instead of the batch accuracy (`criterion="loss"`, on every per-batch polling optimizer; `--criterion loss` in the benchmark, for Efficient Relative Polling per batch and this variant). The loss is continuous, so it still tells apart trial steps too close to change a single prediction, and the candidates almost never tie: scored by loss, the ties no longer pull the jump back, and only runs widen it. The accuracy is still what gets reported and what picks the checkpoint.
+
+```python
+from efficient_polling_lr_scheduler import EfficientRelativeNarrowingPollingSGD
+
+optimizer = EfficientRelativeNarrowingPollingSGD(
+    model, lr=1e-3, multiplier=10.0, narrowing=0.5, patience=8, lr_max=1e-1
+)
+```
+
+| Symbol | Default | Role |
+|---|---|---|
+| `m` | `10` | the widest jump, as in Efficient Relative Polling |
+| `ν` | `0.5` | `narrowing`: fraction of the jump one narrowing takes off; `0.5` puts the next neighbour on the geometric middle, `X·√10` for `m = 10` |
+| `d_max` | none | `max_narrowings`: optional cap on the narrowings, which makes the finest jump `m^((1 − ν)^d_max)`; `3` with the other defaults stops at `×1.33` |
+| `p₀` | `8` | `patience`: polls a behaviour has to last before the jump moves a step |
+| `ρ` | `0.5` | `break_discount`: what a poll that breaks a behaviour takes off its patience, as a fraction of a poll, in `[0, 1)` |
+| | `"score"` | `criterion`: what ranks the trials, the closure's score (batch accuracy) or, with `"loss"`, the batch loss |
+
+It is experimental: nothing has been run with it beyond a smoke test.
 
 ## Cost model
 

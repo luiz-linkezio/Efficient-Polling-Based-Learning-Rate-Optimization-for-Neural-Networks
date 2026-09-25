@@ -15,6 +15,7 @@ from ._snapshot import StateSnapshot
 from .closures import Closure
 
 __all__ = [
+    "CRITERIA",
     "PollResult",
     "StepInfo",
     "PollingOptimizer",
@@ -23,6 +24,10 @@ __all__ = [
 ]
 
 DEFAULT_DECADES: tuple[int, ...] = (-2, -1, 0, 1, 2)
+
+#: What a poll ranks its trials by: the closure's score, highest first, or its
+#: loss, lowest first.
+CRITERIA: tuple[str, ...] = ("score", "loss")
 
 #: Keyword arguments the ``*SGD`` convenience classes forward to :class:`torch.optim.SGD`.
 _SGD_KEYS = frozenset({"momentum", "dampening", "weight_decay", "nesterov", "maximize"})
@@ -45,11 +50,11 @@ class PollResult:
         lr: winning learning rate, already applied to the parameters.
         post_loss: loss after the winning step.
         post_score: score of the winning candidate.
-        had_signal: whether the candidates disagreed. All-equal scores mean the
-            poll carried no information -- at initialization every candidate
-            typically ties on batch accuracy.
-        decisive: whether the winner strictly outscored every other candidate,
-            rather than sharing the top score with one of them.
+        had_signal: whether the candidates disagreed on the criterion. All-equal
+            scores mean the poll carried no information -- at initialization
+            every candidate typically ties on batch accuracy.
+        decisive: whether the winner strictly outranked every other candidate,
+            rather than sharing the top with one of them.
         optimizer_steps: optimizer steps the poll cost, ``len(candidates) + 1``.
     """
 
@@ -101,8 +106,9 @@ class PollingOptimizer:
 
     At each batch the gradient is computed once at the current parameters, then
     every candidate learning rate is applied as a trial step from an identical
-    snapshot and scored by the closure. The winner -- highest score, ties going
-    to the smallest learning rate -- is re-applied from that same snapshot.
+    snapshot and scored by the closure. The winner -- highest score, or lowest
+    loss with ``criterion="loss"``, ties going to the smallest learning rate --
+    is re-applied from that same snapshot.
 
     This is the replicated base method: accurate, and it costs
     ``len(candidate_lrs) + 1`` optimizer steps per batch. See
@@ -118,6 +124,12 @@ class PollingOptimizer:
         module: the model, so its buffers (BatchNorm running statistics) are
             restored between trials. Required for correctness with any module
             that mutates buffers during the forward pass.
+        criterion: what ranks the trials, one of :data:`CRITERIA`. ``"score"``
+            takes the highest score the closure returns, batch accuracy in the
+            paper. ``"loss"`` takes the lowest loss instead: it is continuous, so
+            it still tells apart trial steps too close to change a single
+            prediction, which accuracy scores as a tie. The score is what gets
+            reported either way.
 
     Note:
         Candidate learning rates are absolute and applied to *every* parameter
@@ -129,6 +141,8 @@ class PollingOptimizer:
         optimizer: Optimizer,
         candidate_lrs: Iterable[float] | None = None,
         module: nn.Module | None = None,
+        *,
+        criterion: str = "score",
     ) -> None:
         if not isinstance(optimizer, Optimizer):
             raise TypeError(
@@ -136,6 +150,8 @@ class PollingOptimizer:
             )
         if not optimizer.param_groups:
             raise ValueError("optimizer has no parameter groups")
+        if criterion not in CRITERIA:
+            raise ValueError(f"criterion must be one of {CRITERIA}, got {criterion!r}")
 
         if candidate_lrs is None:
             candidate_lrs = default_candidate_lrs(float(optimizer.param_groups[0]["lr"]))
@@ -150,6 +166,7 @@ class PollingOptimizer:
         self.optimizer = optimizer
         self.candidate_lrs = lrs
         self.module = module
+        self.criterion = criterion
         self._snapshot: StateSnapshot | None = None
 
     # -- polling ----------------------------------------------------------
@@ -164,7 +181,7 @@ class PollingOptimizer:
             closure: scores a trial step; see
                 :class:`~efficient_polling_lr_scheduler.closures.Closure`.
             candidates: learning rates to try on this poll, in tie-break order:
-                on equal scores the earlier one wins. Defaults to the fixed
+                on a tie the earlier one wins. Defaults to the fixed
                 candidate set, ascending, so ties favour the smallest rate.
         """
         lrs = self.candidate_lrs if candidates is None else tuple(float(lr) for lr in candidates)
@@ -177,11 +194,13 @@ class PollingOptimizer:
             snapshot.capture()
 
         best_lr = lrs[0]
+        best_rank = -math.inf
         best_score = -math.inf
         best_loss = math.nan
         at_top = 0
         lowest = math.inf
         highest = -math.inf
+        by_loss = self.criterion == "loss"
 
         for lr in lrs:  # in tie-break order, so ``>`` keeps the earlier on ties
             snapshot.restore()
@@ -192,15 +211,18 @@ class PollingOptimizer:
             loss_value = float(loss)
             # A trial that broke the weights scores nothing, whatever its
             # predictions happen to say.
-            score = float(score) if math.isfinite(loss_value) else -math.inf
-            lowest = min(lowest, score)
-            highest = max(highest, score)
-            if score > best_score:
+            finite = math.isfinite(loss_value)
+            score = float(score) if finite else -math.inf
+            rank = -loss_value if by_loss and finite else score
+            lowest = min(lowest, rank)
+            highest = max(highest, rank)
+            if rank > best_rank:
+                best_rank = rank
                 best_score = score
                 best_loss = loss_value
                 best_lr = lr
                 at_top = 1
-            elif score == best_score:
+            elif rank == best_rank:
                 at_top += 1
 
         snapshot.restore()
@@ -326,6 +348,7 @@ class PollingSGD(PollingOptimizer):
             candidate set.
         candidate_lrs: see :class:`PollingOptimizer`.
         module: see :class:`PollingOptimizer`.
+        criterion: see :class:`PollingOptimizer`.
 
     Remaining keyword arguments are forwarded to :class:`torch.optim.SGD`.
     """
@@ -337,6 +360,7 @@ class PollingSGD(PollingOptimizer):
         *,
         candidate_lrs: Iterable[float] | None = None,
         module: nn.Module | None = None,
+        criterion: str = "score",
         **sgd_kwargs: Any,
     ) -> None:
         params, module = _split_module(params, module)
@@ -344,4 +368,5 @@ class PollingSGD(PollingOptimizer):
             torch.optim.SGD(params, lr=lr, **sgd_kwargs),
             candidate_lrs=candidate_lrs,
             module=module,
+            criterion=criterion,
         )

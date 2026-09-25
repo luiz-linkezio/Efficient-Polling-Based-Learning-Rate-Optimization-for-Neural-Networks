@@ -326,6 +326,7 @@ def test_the_table_reports_mean_and_sample_deviation() -> None:
         ("efficient_fixed", "grid 1e-5–1e-1"),
         ("efficient_relative", "1e-3, ×÷10, ceiling 1e-1"),
         ("efficient_relative_epoch", "1e-3, ×÷10, ceiling 1e-1"),
+        ("efficient_relative_narrowing", "1e-3, ×÷10 and finer, ceiling 1e-1"),
     ],
 )
 def test_the_table_says_what_rate_each_method_of_the_main_table_started_from(
@@ -364,3 +365,43 @@ def test_an_infinite_ceiling_lets_the_relative_window_roam() -> None:
     args = parse_args(["--data-dir", "/nowhere", "--relative-lr-max", "inf"])
 
     assert build_experiment(args).hyperparameters.relative.lr_max is None
+
+
+@pytest.mark.parametrize(
+    ("flag", "cap"), [("3", 3), ("0", 0), ("none", None), ("None", None), ("inf", None)]
+)
+def test_the_narrowings_take_an_optional_cap(flag: str, cap: int | None) -> None:
+    args = parse_args(["--data-dir", "/nowhere", "--max-narrowings", flag])
+
+    assert build_experiment(args).hyperparameters.relative.max_narrowings == cap
+
+
+def test_a_negative_cap_on_the_narrowings_is_refused_up_front() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--data-dir", "/nowhere", "--max-narrowings", "-1"])
+
+
+@pytest.mark.parametrize("method", ["efficient_relative", "efficient_relative_narrowing"])
+def test_the_criterion_reaches_both_per_batch_relative_optimizers(method: str) -> None:
+    optimizer, _ = optimizer_for(method, "cifar10")
+    assert optimizer.criterion == "score"
+    args = parse_args(["--data-dir", "/nowhere", "--criterion", "loss"])
+    hyperparameters = build_experiment(args).hyperparameters
+
+    assert hyperparameters.relative.criterion == "loss"
+    optimizer, _ = optimizer_for(method, "cifar10", hyperparameters)
+    assert optimizer.criterion == "loss"
+
+
+def test_an_unknown_criterion_is_refused_up_front() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--data-dir", "/nowhere", "--criterion", "accuracy"])
+
+
+def test_a_cap_on_the_narrowings_names_the_finest_jump() -> None:
+    hyperparameters = Hyperparameters()
+    hyperparameters.relative.max_narrowings = 3
+    method = "efficient_relative_narrowing"
+    _, _, row = results_table({method: [record(method, 42)]}, hyperparameters).splitlines()
+
+    assert row.split(" | ")[1] == "1e-3, ×÷10 down to ×÷1.33, ceiling 1e-1"

@@ -102,6 +102,7 @@ The main table fixes the base optimizer at SGD and the starting rate at `1e-3`, 
 | Polling, Efficient Polling | the centre of the candidate grid, two decades either side, so from `1` the grid reaches `1e+2`, as in the initial-rate runs |
 | Trigger ablations | as for Efficient Polling, with the poll rate calibrated to the round's own Efficient Polling run |
 | Efficient Relative Polling, per batch and per epoch | where it starts, under the main table's `1e-1` ceiling, which the rounds from `1` raise to `1` because the method refuses to start above its ceiling |
+| Efficient Relative Narrowing Polling | as Efficient Relative Polling per batch, under the same ceiling |
 
 Adam, SPS and Armijo sit the rounds out. Adam is the base optimizer of half of them. SPS and Armijo never read a starting rate: the Polyak step overwrites it on the first batch, and the line search starts every batch from its ceiling. Their own test moves that ceiling through the same three rates instead, on SGD only, because both formulas assume the step follows the gradient, which Adam's does not.
 
@@ -117,7 +118,7 @@ python -m benchmark.rounds --datasets covertype --tables-only           # the ta
 
 The command runs every round and ceiling of the datasets asked for in one pool of processes, several per GPU (see below), skips runs already recorded, and prints the tables at the end. In the notebook, one cell after the initial-rate runs sweeps the whole study for `DATASET`, one run after another, and prints the same tables; the Figures section draws each round's figures into `images/<dataset>/rounds/<optimizer>_lr<rate>/`.
 
-**Cost.** Going by the recorded runs, a round costs what the main table costs without Adam, SPS and Armijo: about 8 h of CIFAR-10 for five seeds, and some 57 h of run time over the five datasets, four of which shared the GPU three at a time. A round can take longer, since Adam's step is slower than SGD's and a method that stalls at its smallest candidate polls every other batch. SPS and Armijo add about 1.5 h of CIFAR-10 per ceiling, 15 h over the five datasets.
+**Cost.** Going by the recorded runs, a round costs what the main table costs without Adam, SPS and Armijo: about 8 h of CIFAR-10 for five seeds, and some 57 h of run time over the five datasets, four of which shared the GPU three at a time. A round can take longer, since Adam's step is slower than SGD's and a method that stalls at its smallest candidate polls every other batch. SPS and Armijo add about 1.5 h of CIFAR-10 per ceiling, 15 h over the five datasets. These figures predate Efficient Relative Narrowing Polling, whose runs are not recorded yet; in a three-epoch CIFAR-10 smoke test it polled 51% of the batches, against 17% for Efficient Relative Polling.
 
 ## Running on a SLURM cluster
 
@@ -172,6 +173,7 @@ rsync -av <user>@<login node>:Efficient-Polling-Based-Learning-Rate-Optimization
 │   ├── polling.py             # base method (Tan et al.)
 │   ├── efficient.py           # Efficient Polling, incl. the fixed/random triggers
 │   ├── efficient_relative.py  # Efficient Relative Polling, per batch and per epoch
+│   ├── efficient_relative_narrowing.py  # Efficient Relative Narrowing Polling
 │   ├── baselines.py           # SPS and Armijo backtracking comparison optimizers
 │   ├── _snapshot.py           # exact state save/restore for trial steps
 │   ├── closures.py            # batch closures and selection criteria
@@ -179,7 +181,7 @@ rsync -av <user>@<login node>:Efficient-Polling-Based-Learning-Rate-Optimization
 ├── benchmark/                 # the experiment, run by python -m benchmark and the notebook
 │   ├── datasets.py            # the five dataset readers, no torchvision
 │   ├── models.py              # SimpleCNN and SimpleMLP
-│   ├── methods.py             # the thirteen configurations and their hyperparameters
+│   ├── methods.py             # every configuration and its hyperparameters
 │   ├── sweep.py               # runs configurations over seeds, records and reads back runs
 │   ├── rounds.py              # the learning-rate study: rounds, ceilings, one table per initial rate
 │   ├── pool.py                # runs side by side, several per GPU

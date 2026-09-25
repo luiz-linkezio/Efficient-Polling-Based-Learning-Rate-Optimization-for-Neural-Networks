@@ -61,6 +61,7 @@ METHOD_COLORS = {
     "efficient_random": "#BF812D",
     "efficient_relative": "#B2182B",
     "efficient_relative_epoch": "#01665E",
+    "efficient_relative_narrowing": "#542788",
 }
 
 METHOD_STYLES: dict[str, Any] = {
@@ -77,6 +78,7 @@ METHOD_STYLES: dict[str, Any] = {
     "efficient_random": "-.",
     "efficient_relative": "-",
     "efficient_relative_epoch": "--",
+    "efficient_relative_narrowing": ":",
 }
 
 # Short names, for legends that have to fit a 2-inch panel.
@@ -94,16 +96,25 @@ SHORT_LABELS = {
     "efficient_random": "abl. random",
     "efficient_relative": "Eff. relative",
     "efficient_relative_epoch": "Eff. rel. epoch",
+    "efficient_relative_narrowing": "Eff. rel. narrowing",
 }
 
-# Thirteen curves on one axes are unreadable, so every figure is small multiples:
+# Fourteen curves on one axes are unreadable, so every figure is small multiples:
 # one panel per family, at most five series each. `efficient` repeats in the last
 # two panels because it is the reference both of them are read against.
 METHOD_GROUPS: Groups = (
     ("Fixed rate and schedulers", ("baseline", "adam", "cosine", "step", "plateau")),
     ("Step size measured on the batch", ("sps", "armijo", "polling", "efficient")),
     ("Trigger ablation", ("efficient", "efficient_fixed", "efficient_random")),
-    ("Efficient relative polling", ("efficient", "efficient_relative", "efficient_relative_epoch")),
+    (
+        "Efficient relative polling",
+        (
+            "efficient",
+            "efficient_relative",
+            "efficient_relative_epoch",
+            "efficient_relative_narrowing",
+        ),
+    ),
 )
 
 # The figures are authored at the size they are printed at, so nothing is

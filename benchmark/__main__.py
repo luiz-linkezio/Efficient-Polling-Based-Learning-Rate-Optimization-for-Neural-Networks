@@ -18,6 +18,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from efficient_polling_lr_scheduler import CRITERIA
+
 from .datasets import DATASETS
 from .methods import METHODS, Hyperparameters, rate_text
 from .rounds import CEILING_METHODS, ROUND_METHODS, Round, ceiling_experiment, round_experiment
@@ -28,6 +30,23 @@ def _ceiling(text: str) -> float | None:
     """A rate ceiling; ``inf`` means none."""
     value = float(text)
     return None if math.isinf(value) else value
+
+
+def _cap(text: str) -> int | None:
+    """An optional cap on a count; ``none`` or ``inf`` means none."""
+    if text.strip().lower() in ("none", "inf"):
+        return None
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be at least 0, or none, got {value}")
+    return value
+
+
+def _criterion(text: str) -> str:
+    """What a poll ranks its trials by, one of the package's criteria."""
+    if text not in CRITERIA:
+        raise argparse.ArgumentTypeError(f"must be one of {', '.join(CRITERIA)}, got {text!r}")
+    return text
 
 
 def _round(text: str) -> Round:
@@ -108,6 +127,44 @@ SETTINGS: tuple[tuple[str, str, str, Callable[[str], Any], str], ...] = (
         "spike_z",
         float,
         "Efficient Relative Polling: deviations above the loss trend that force a poll",
+    ),
+    (
+        "--criterion",
+        "relative",
+        "criterion",
+        _criterion,
+        "Efficient Relative Polling per batch, narrowing included: what a poll ranks its "
+        "trials by, the batch accuracy (score) or the batch loss (loss)",
+    ),
+    (
+        "--narrowing",
+        "relative",
+        "narrowing",
+        float,
+        "Efficient Relative Narrowing Polling: fraction of the jump one narrowing takes off",
+    ),
+    (
+        "--max-narrowings",
+        "relative",
+        "max_narrowings",
+        _cap,
+        "Efficient Relative Narrowing Polling: optional cap on the narrowings that pile up; "
+        "none or inf sets no cap",
+    ),
+    (
+        "--patience",
+        "relative",
+        "patience",
+        int,
+        "Efficient Relative Narrowing Polling: polls a behaviour lasts before the jump moves",
+    ),
+    (
+        "--break-discount",
+        "relative",
+        "break_discount",
+        float,
+        "Efficient Relative Narrowing Polling: what a poll that breaks a behaviour takes off "
+        "its patience, as a fraction of a poll",
     ),
 )
 

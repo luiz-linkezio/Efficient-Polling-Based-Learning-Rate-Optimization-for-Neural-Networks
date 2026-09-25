@@ -102,6 +102,7 @@ A tabela principal fixa o otimizador base no SGD e a taxa inicial em `1e-3`, e v
 | Polling, Efficient Polling | o centro da grade de candidatas, duas décadas para cada lado, então a partir de `1` a grade chega a `1e+2`, como nas execuções de taxa inicial |
 | Ablações do gatilho | como no Efficient Polling, com a taxa de poll calibrada pela execução do Efficient Polling da própria rodada |
 | Efficient Relative Polling, por batch e por época | onde ele começa, sob o teto de `1e-1` da tabela principal, que as rodadas de `1` sobem para `1` porque o método recusa começar acima do teto |
+| Efficient Relative Narrowing Polling | como o Efficient Relative Polling por batch, sob o mesmo teto |
 
 Adam, SPS e Armijo ficam fora das rodadas. O Adam é o otimizador base de metade delas. SPS e Armijo nunca leem uma taxa inicial: o passo de Polyak a sobrescreve no primeiro batch, e a busca em linha começa todo batch pelo teto. O teste deles move esse teto pelas mesmas três taxas, só no SGD, porque as duas fórmulas supõem que o passo segue o gradiente, e o do Adam não segue.
 
@@ -117,7 +118,7 @@ python -m benchmark.rounds --datasets covertype --tables-only           # as tab
 
 O comando roda todas as rodadas e tetos dos datasets pedidos num único pool de processos, vários por GPU (veja abaixo), pula execuções já registradas e imprime as tabelas no fim. No notebook, uma célula depois das execuções de taxa inicial varre o estudo inteiro do `DATASET`, uma execução depois da outra, e imprime as mesmas tabelas; a seção Figures desenha as figuras de cada rodada em `images/<dataset>/rounds/<otimizador>_lr<taxa>/`.
 
-**Custo.** Pelas execuções registradas, uma rodada custa o que a tabela principal custa sem Adam, SPS e Armijo: cerca de 8 h de CIFAR-10 para cinco seeds, e umas 57 h de execução nos cinco datasets, quatro dos quais dividiram a GPU três por vez. Uma rodada pode demorar mais, porque o passo do Adam é mais lento que o do SGD e um método que trava na menor candidata faz poll a cada dois batches. SPS e Armijo somam cerca de 1,5 h de CIFAR-10 por teto, 15 h nos cinco datasets.
+**Custo.** Pelas execuções registradas, uma rodada custa o que a tabela principal custa sem Adam, SPS e Armijo: cerca de 8 h de CIFAR-10 para cinco seeds, e umas 57 h de execução nos cinco datasets, quatro dos quais dividiram a GPU três por vez. Uma rodada pode demorar mais, porque o passo do Adam é mais lento que o do SGD e um método que trava na menor candidata faz poll a cada dois batches. SPS e Armijo somam cerca de 1,5 h de CIFAR-10 por teto, 15 h nos cinco datasets. Esses números são anteriores ao Efficient Relative Narrowing Polling, que ainda não tem execuções registradas; num teste de fumaça de três épocas no CIFAR-10 ele fez poll em 51% dos batches, contra 17% do Efficient Relative Polling.
 
 ## Execução num cluster SLURM
 
@@ -172,6 +173,7 @@ rsync -av <usuário>@<nó de login>:Efficient-Polling-Based-Learning-Rate-Optimi
 │   ├── polling.py             # método base (Tan et al.)
 │   ├── efficient.py           # Efficient Polling, incl. os gatilhos fixo/aleatório
 │   ├── efficient_relative.py  # Efficient Relative Polling, por batch e por época
+│   ├── efficient_relative_narrowing.py  # Efficient Relative Narrowing Polling
 │   ├── baselines.py           # otimizadores de comparação SPS e Armijo backtracking
 │   ├── _snapshot.py           # salvamento/restauração exata do estado nos testes
 │   ├── closures.py            # closures do batch e critérios de seleção
@@ -179,7 +181,7 @@ rsync -av <usuário>@<nó de login>:Efficient-Polling-Based-Learning-Rate-Optimi
 ├── benchmark/                 # o experimento, rodado por python -m benchmark e pelo notebook
 │   ├── datasets.py            # os cinco leitores de dataset, sem torchvision
 │   ├── models.py              # SimpleCNN e SimpleMLP
-│   ├── methods.py             # as treze configurações e seus hiperparâmetros
+│   ├── methods.py             # todas as configurações e seus hiperparâmetros
 │   ├── sweep.py               # roda configurações sobre seeds, registra e relê as execuções
 │   ├── rounds.py              # o estudo de learning rate: rodadas, tetos, uma tabela por taxa inicial
 │   ├── pool.py                # execuções lado a lado, várias por GPU

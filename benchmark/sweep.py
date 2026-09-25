@@ -323,7 +323,7 @@ class Experiment:
 
 
 def load_runs(results_dir: Path | str) -> dict[str, list[dict[str, Any]]]:
-    """Every recorded run of the thirteen configurations, by method, in table order.
+    """Every recorded run of every configuration, by method, in table order.
 
     The initial-rate robustness runs are left out; see :func:`load_initial_lr_runs`.
     """

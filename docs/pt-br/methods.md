@@ -5,6 +5,7 @@
 - [Polling](#polling-método-base-replicado), o método base replicado
 - [Efficient Polling](#efficient-polling), que faz poll sob demanda
 - [Efficient Relative Polling](#efficient-relative-polling), que dispensa a grade fixa
+- [Efficient Relative Narrowing Polling](#efficient-relative-narrowing-polling), cujo pulo estreita entre duas taxas
 - [Modelo de custo](#modelo-de-custo)
 
 ## Polling (método base replicado)
@@ -73,6 +74,44 @@ optimizer = EfficientRelativePollingSGD(model, lr=1e-3, multiplier=10.0, lr_max=
 | `ℓ_rb` | `2·ln(classes)` | limiar de estouro, como acima |
 
 O `EfficientRelativeEpochPolling` aplica a mesma janela por época em vez de por batch, conduzido por `fit(..., epoch_polling=...)`: treina uma época inteira por candidato a partir de um snapshot e mantém a que teve a menor perda média de treino. Fica como resultado negativo documentado; ver [Resultados](results.md#efficient-relative-polling).
+
+## Efficient Relative Narrowing Polling
+
+O Efficient Relative Polling move a taxa um multiplicador inteiro por vez. Com `m = 10` ela vive nas décadas, e quando a taxa que o batch quer fica entre duas delas, ela salta de uma para a outra e nunca testa o que fica no meio. O Efficient Relative Narrowing Polling deixa o próprio pulo `f` se adaptar, começando em `m`:
+
+```
+C_t = {X/f, X, X·f}        f = m^((1 − ν)^d)
+```
+
+`d` conta os estreitamentos em vigor e `ν` é a fração do pulo, em ordens de grandeza, que um estreitamento tira. `d` muda quando um comportamento dos polls se mantém, nunca por um poll isolado:
+
+1. **A taxa está cercada:** o centro ganha, ou o vencedor inverte (sobe depois de descer, ou desce depois de subir). Os dois são um comportamento só: com `{10¹, 10², 10³}`, `10²` ganhar sempre diz o mesmo que uma oscilação entre `10¹` e `10³`. Um cerco que se mantém é um platô, e o pulo estreita (`d + 1`) para olhar entre os candidatos.
+2. **A taxa segue num sentido:** o vencedor se move no mesmo sentido da última mudança, só subindo ou só descendo. Uma sequência que se mantém quer dizer que a taxa ainda está longe, e o pulo volta a alargar (`d − 1`) dos dois lados, para buscar num range maior, nunca além de `m`.
+
+Cada comportamento tem uma paciência contada em polls, `p_n` para estreitar e `p_w` para alargar, as duas começando em `p₀`. Um poll de um comportamento tira um poll inteiro da própria paciência e `ρ` de um poll da outra: um poll que quebra a tendência desacelera a contagem sem devolver o que já foi gasto, então um poll perdido não desfaz um platô que está se formando. Quando uma paciência chega a zero, `d` anda um passo (a não ser que já esteja em `0`, ou em `d_max` quando há um) e as duas paciências recomeçam de `p₀`. A paciência é um contador diferente do intervalo de poll `k` do backoff, que não muda: `k` decide quando fazer poll, `p_n` e `p_w` com que resolução.
+
+Um empate (todos os candidatos com a mesma pontuação) com o pulo estreitado diz que o pulo ficou fino demais para distinguir os candidatos, e conta como poll de alargamento; em `m` o empate alarga a janela na hora, como no Efficient Relative Polling. Por padrão nada limita os estreitamentos: um platô que se mantém continua estreitando o pulo, e quem para isso são os empates. O único limite que sempre vale é o numérico, já que um estreitamento que poria os vizinhos a um arredondamento do centro não acontece. Um centro em `lr_min` ou `lr_max` tem um vizinho dobrado sobre ele e não cerca nada, então a vitória dele não conta para nenhum comportamento, nem o poll que encerra um trecho cego, que só traz a janela de volta a `m`. Um restart volta para `f = m` com as paciências cheias. Produtos de pulos fracionários desviam um ou dois ulps, então uma taxa a um arredondamento de um limite conta como estando nele. Com `ν = 0` o método é o Efficient Relative Polling, salvo esse arredondamento nos limites.
+
+O poll também pode ranquear os testes pela loss do batch em vez da acurácia do batch (`criterion="loss"`, em todo otimizador com poll por batch; `--criterion loss` no benchmark, para o Efficient Relative Polling por batch e esta variante). A loss é contínua, então ainda distingue passos de teste próximos demais para mudar uma única previsão, e os candidatos quase nunca empatam: pela loss, os empates deixam de puxar o pulo de volta, e só as sequências num sentido só o alargam. A acurácia continua sendo o número reportado e o que escolhe o checkpoint.
+
+```python
+from efficient_polling_lr_scheduler import EfficientRelativeNarrowingPollingSGD
+
+optimizer = EfficientRelativeNarrowingPollingSGD(
+    model, lr=1e-3, multiplier=10.0, narrowing=0.5, patience=8, lr_max=1e-1
+)
+```
+
+| Símbolo | Padrão | Papel |
+|---|---|---|
+| `m` | `10` | o pulo mais largo, como no Efficient Relative Polling |
+| `ν` | `0.5` | `narrowing`: fração do pulo que um estreitamento tira; `0.5` põe o próximo vizinho no meio geométrico, `X·√10` para `m = 10` |
+| `d_max` | nenhum | `max_narrowings`: limite opcional dos estreitamentos, que faz o pulo mais fino ser `m^((1 − ν)^d_max)`; `3` com os outros padrões para em `×1,33` |
+| `p₀` | `8` | `patience`: polls que um comportamento precisa durar para o pulo andar um passo |
+| `ρ` | `0.5` | `break_discount`: quanto um poll que quebra o comportamento tira da paciência dele, como fração de um poll, em `[0, 1)` |
+| | `"score"` | `criterion`: o que ranqueia os testes, a pontuação da closure (acurácia do batch) ou, com `"loss"`, a loss do batch |
+
+É experimental: nada foi rodado com ele além de um teste de fumaça.
 
 ## Modelo de custo
 
