@@ -351,11 +351,12 @@ def test_rejects_a_negative_max_interval(model: TinyNet) -> None:
 
 def test_sgd_and_schedule_kwargs_are_routed(model: TinyNet) -> None:
     poller = EfficientPollingSGD(
-        model, lr=1e-3, momentum=0.9, weight_decay=1e-4, max_poll_interval=16
+        model, lr=1e-3, momentum=0.9, weight_decay=1e-4, max_poll_interval=16, criterion="loss"
     )
     assert poller.optimizer.param_groups[0]["momentum"] == 0.9
     assert poller.optimizer.param_groups[0]["weight_decay"] == 1e-4
     assert poller.max_poll_interval == 16
+    assert poller.criterion == "loss"
 
 
 def test_state_dict_preserves_the_schedule(scripted) -> None:

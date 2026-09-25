@@ -234,6 +234,7 @@ def the_recorded_construction(method: str, model: nn.Module, hyperparameters: Hy
         lr_max=r.lr_max,
         spike_z=r.spike_z,
         rollback_loss=blowup_loss(spec),
+        criterion="score",  # batch accuracy, the default up to 2.0.0
     )
 
 

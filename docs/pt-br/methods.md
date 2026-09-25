@@ -49,10 +49,12 @@ O mecanismo de seleção é mantido intacto, mas só se faz poll num batch quand
 Os dois métodos acima escolhem dentro de uma grade *fixa*, e nas runs registradas do CIFAR-10 a taxa escolhida passa a maior parte do treino encostada nas bordas dessa grade: `1e-1` na primeira fase, `1e-5` depois do annealing. O Efficient Relative Polling dispensa a grade. O usuário escolhe uma taxa de aprendizado e um multiplicador `m`, e cada poll testa três candidatos em torno da taxa em uso; o vencedor vira o novo centro:
 
 ```
-C_t = {X/m, X, X·m}        X ← argmax acc(θ̂, batch)
+C_t = {X/m, X, X·m}        X ← argmin perda(θ̂, batch)
 ```
 
-Quando um poll volta cego (todos os candidatos com a mesma pontuação, o que a acurácia do batch faz sempre que um passo não muda nenhuma predição), o poll seguinte olha um multiplicador mais longe nos dois sentidos, e continua alargando até enxergar uma diferença; um poll com sinal estreita a janela de volta. Três regras completam o método:
+Desde a 2.1.0 um poll fica com o candidato cujo passo de teste deixa a menor perda no batch. Até a 2.0.0 ficava com a maior acurácia do batch, que `criterion="score"` traz de volta; as execuções registradas em [Resultados](results.md) usaram essa. A perda é contínua, então distingue candidatos cujos passos não mudam nenhuma predição, onde a acurácia empata, e o poll confirma a taxa com mais frequência.
+
+Quando um poll volta cego (todos os candidatos com a mesma pontuação, o que a acurácia do batch faz sempre que um passo não muda nenhuma predição, e a perda só quando os passos são pequenos demais para movê-la), o poll seguinte olha um multiplicador mais longe nos dois sentidos, e continua alargando até enxergar uma diferença; um poll com sinal estreita a janela de volta. Três regras completam o método:
 
 1. **Backoff sem teto, limitado pela falha.** O intervalo de poll `k` dobra quando um poll agendado com sinal mantém a taxa, um poll cego o deixa como está, e não tem `K_max`. Cada poll registra o *melhor* ponto visto até então (pesos, estado do otimizador e taxa, julgados por uma tendência lenta da perda). Quando um trecho cego estoura, o treino volta no tempo até esse ponto, `k` vai a zero e o teto do próximo slow start passa a ser metade do intervalo que estourou; o crescimento é exponencial até o teto e linear acima dele, como no controle de congestionamento do TCP.
 2. **Empate mantém a taxa, exceto depois de um restart.** Um empate não carrega informação, então um poll comum mantém `X`. O poll logo depois de um restart desempata um degrau *para baixo*, porque um restart tem uma única causa: taxa alta demais para passos cegos.
@@ -71,6 +73,7 @@ optimizer = EfficientRelativePollingSGD(model, lr=1e-3, multiplier=10.0, lr_max=
 | `lr_min`, `lr_max` | nenhum | limites opcionais; os experimentos usam o teto `1e-1`, o mesmo de todos os outros métodos |
 | `z` | `3` | limiar de spike, em desvios acima da tendência |
 | `ℓ_rb` | `2·ln(classes)` | limiar de estouro, como acima |
+| `criterion` | `"loss"` | o que ranqueia os testes: a perda do batch, ou `"score"`, a acurácia do batch usada até a 2.0.0 e nas execuções registradas |
 
 O `EfficientRelativeEpochPolling` aplica a mesma janela por época em vez de por batch, conduzido por `fit(..., epoch_polling=...)`: treina uma época inteira por candidato a partir de um snapshot e mantém a que teve a menor perda média de treino. Fica como resultado negativo documentado; ver [Resultados](results.md#efficient-relative-polling).
 

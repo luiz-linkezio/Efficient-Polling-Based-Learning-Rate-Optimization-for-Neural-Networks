@@ -96,6 +96,7 @@ print(history.best_val_acc, sum(history.polls), sum(history.optimizer_steps))
 | `ArmijoSGD` / `ArmijoOptimizer` | comparison baseline: stochastic Armijo backtracking line search |
 | `TRIGGERS` | the three polling triggers used in the ablation: `"backoff"` (default), `"fixed"`, `"random"` |
 | `make_closure`, `accuracy`, `negative_loss` | batch closure and selection criteria (accuracy, or loss) |
+| `CRITERIA` | what a poll ranks its trials by, the `criterion` of every polling optimizer: `"score"` (the closure's score, batch accuracy) or `"loss"`; Efficient Relative Polling defaults to `"loss"` since 2.1.0, the others to `"score"` |
 | `StepInfo`, `EpochStats`, `History` | telemetry: chosen LR, polls, spikes, rollbacks, optimizer steps |
 | `fit`, `train_epoch`, `evaluate` | optional training loop helpers, accepting a `torch.optim.lr_scheduler` for the plain-optimizer comparison methods |
 | `StateSnapshot` | exact save/restore of parameters, buffers and optimizer state |

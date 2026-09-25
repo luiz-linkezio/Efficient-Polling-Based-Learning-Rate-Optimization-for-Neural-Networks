@@ -172,6 +172,10 @@ class EfficientRelative:
     # The same 1e-1 ceiling every other method is held to; None lets the window roam.
     lr_max: float | None = 1e-1
     spike_z: float = 3.0  # per batch: deviations above the loss trend that force a poll
+    # Per batch: what a poll ranks its trials by, the batch accuracy ("score") or the
+    # batch loss ("loss"). The package defaults to the loss since 2.1.0; the recorded
+    # runs used the accuracy, so the benchmark keeps it and resumes them unchanged.
+    criterion: str = "score"
 
 
 @dataclass
@@ -335,6 +339,7 @@ def build_optimizer(
             lr_max=r.lr_max,
             spike_z=r.spike_z,
             rollback_loss=blowup_loss(spec),
+            criterion=r.criterion,
         )
         return relative, None
     if method == "efficient_relative_epoch":

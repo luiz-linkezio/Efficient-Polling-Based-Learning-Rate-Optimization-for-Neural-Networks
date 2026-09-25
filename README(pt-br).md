@@ -96,6 +96,7 @@ print(history.best_val_acc, sum(history.polls), sum(history.optimizer_steps))
 | `ArmijoSGD` / `ArmijoOptimizer` | baseline de comparação: busca de linha Armijo backtracking estocástica |
 | `TRIGGERS` | os três gatilhos de poll usados na ablação: `"backoff"` (padrão), `"fixed"`, `"random"` |
 | `make_closure`, `accuracy`, `negative_loss` | closure do batch e critérios de seleção (acurácia ou perda) |
+| `CRITERIA` | o que um poll usa para ranquear os testes, o `criterion` de todo otimizador com poll: `"score"` (a pontuação da closure, acurácia do batch) ou `"loss"`; o Efficient Relative Polling usa `"loss"` por padrão desde a 2.1.0, os outros `"score"` |
 | `StepInfo`, `EpochStats`, `History` | telemetria: LR escolhida, polls, spikes, rollbacks, passos do otimizador |
 | `fit`, `train_epoch`, `evaluate` | helpers opcionais do loop de treino, aceitando um `torch.optim.lr_scheduler` para os métodos de comparação com otimizador comum |
 | `StateSnapshot` | salvamento/restauração exata de parâmetros, buffers e estado do otimizador |

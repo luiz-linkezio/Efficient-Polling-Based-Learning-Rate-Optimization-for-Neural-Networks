@@ -6,10 +6,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-The package itself is unchanged. Everything below is the benchmark around it:
-four more datasets, the runs on them, and a reorganized repository.
+## [2.1.0] - 2026-09-25
+
+Efficient Relative Polling now ranks the trials of a poll by the batch loss
+instead of the batch accuracy, and any polling optimizer can be told which to
+use. Everything else below is the benchmark around the package: four more
+datasets, the runs on them, and a reorganized repository.
 
 ### Added
+
+- `criterion` on every per-batch polling optimizer (`PollingOptimizer`,
+  `EfficientPollingOptimizer`, `EfficientRelativePollingOptimizer` and their SGD
+  classes): `"score"` ranks the trials by the score the closure returns, batch
+  accuracy with `make_closure`; `"loss"` ranks them by the batch loss, lowest
+  first. The loss is continuous, so it still tells apart trial steps too close
+  to change a single prediction, where accuracy ties. Either way the score is
+  what gets reported and a trial that broke the weights loses. `CRITERIA` lists
+  the two.
+- `--criterion` on the benchmark's command line, and
+  `hyperparameters.relative.criterion` in the notebook, for Efficient Relative
+  Polling per batch.
 
 - CIFAR-100, MNIST, Fashion-MNIST and Covertype next to CIFAR-10, read straight
   from the files their authors publish, with no torchvision and no download
@@ -62,6 +78,20 @@ four more datasets, the runs on them, and a reorganized repository.
 
 ### Changed
 
+- **Efficient Relative Polling ranks its polls by loss by default**
+  (`criterion="loss"`); `criterion="score"` gives back the accuracy it used up to
+  2.0.0, step for step. In a smoke test (one seed; 3 epochs of CIFAR-10, 10 of
+  Covertype from `1e-3`, `1e-7` and `1`, with SGD and with Adam) the loss drove
+  the rate to the same places and polled far less: 0.9–1.1% of Covertype's
+  batches on SGD instead of 3.8–13.5%, 3.8% instead of 14.5% on Adam, and 10.4%
+  instead of 16.8% on CIFAR-10. Test accuracy moved between -2.5 points
+  (CIFAR-10) and +0.5, on one seed. From `1e-7` it climbed within the first
+  epoch instead of spending it on tied polls.
+  Longer runs have not been made with it. Polling and Efficient Polling keep the
+  paper's accuracy by default.
+- The benchmark keeps ranking Efficient Relative Polling by accuracy, the
+  criterion its recorded runs used, so a sweep resumes them unchanged;
+  `--criterion loss` runs the package's default.
 - The experiment code is one package, `benchmark/`, imported by both
   `notebooks/benchmark.ipynb` and `python -m benchmark`: `datasets.py`,
   `models.py`, `methods.py`, `sweep.py` and `plots.py`. It replaces

@@ -18,6 +18,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from efficient_polling_lr_scheduler import CRITERIA
+
 from .datasets import DATASETS
 from .methods import METHODS, Hyperparameters, rate_text
 from .rounds import CEILING_METHODS, ROUND_METHODS, Round, ceiling_experiment, round_experiment
@@ -28,6 +30,13 @@ def _ceiling(text: str) -> float | None:
     """A rate ceiling; ``inf`` means none."""
     value = float(text)
     return None if math.isinf(value) else value
+
+
+def _criterion(text: str) -> str:
+    """What a poll ranks its trials by, one of the package's criteria."""
+    if text not in CRITERIA:
+        raise argparse.ArgumentTypeError(f"must be one of {', '.join(CRITERIA)}, got {text!r}")
+    return text
 
 
 def _round(text: str) -> Round:
@@ -108,6 +117,15 @@ SETTINGS: tuple[tuple[str, str, str, Callable[[str], Any], str], ...] = (
         "spike_z",
         float,
         "Efficient Relative Polling: deviations above the loss trend that force a poll",
+    ),
+    (
+        "--criterion",
+        "relative",
+        "criterion",
+        _criterion,
+        "Efficient Relative Polling per batch: what a poll ranks its trials by, the batch "
+        "accuracy (score, what the recorded runs used) or the batch loss (loss, the "
+        "package's default)",
     ),
 )
 
