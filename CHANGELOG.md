@@ -4,6 +4,159 @@ All notable changes to the `efficient-polling-lr-scheduler` package are document
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [2.1.0] - 2026-09-25
+
+Efficient Relative Polling now ranks the trials of a poll by the batch loss
+instead of the batch accuracy, and any polling optimizer can be told which to
+use. Everything else below is the benchmark around the package: four more
+datasets, the runs on them, and a reorganized repository.
+
+### Added
+
+- `criterion` on every per-batch polling optimizer (`PollingOptimizer`,
+  `EfficientPollingOptimizer`, `EfficientRelativePollingOptimizer` and their SGD
+  classes): `"score"` ranks the trials by the score the closure returns, batch
+  accuracy with `make_closure`; `"loss"` ranks them by the batch loss, lowest
+  first. The loss is continuous, so it still tells apart trial steps too close
+  to change a single prediction, where accuracy ties. Either way the score is
+  what gets reported and a trial that broke the weights loses. `CRITERIA` lists
+  the two.
+- `--criterion` on the benchmark's command line, and
+  `hyperparameters.relative.criterion` in the notebook, for Efficient Relative
+  Polling per batch.
+
+- CIFAR-100, MNIST, Fashion-MNIST and Covertype next to CIFAR-10, read straight
+  from the files their authors publish, with no torchvision and no download
+  inside a run. The IDX files are accepted compressed or not, dashed or dotted,
+  and a directory that shares a file's name no longer shadows it. Covertype is
+  tabular: 581,012 rows of 54 cartographic features and seven cover types, on
+  the published split (the first 15,120 rows to fit on, the remaining 565,892
+  to test on), trained with `SimpleMLP` (512→256→128, no batch norm and no
+  dropout, the same rule the CNN follows).
+- The comparison on those four datasets: thirteen configurations over five
+  seeds, 260 runs in `results/<dataset>/`, their figures in `images/<dataset>/`
+  and the tables in `docs/results.md`. Nothing was retuned per dataset.
+- `docs/methods.md`, `docs/results.md` and `docs/reproducing.md`, in English and
+  in Portuguese under `docs/pt-br/`, split out of READMEs that had grown to 400
+  lines each. The READMEs keep the install, the quickstart, the API and a
+  five-dataset summary.
+- Tests for the dataset readers, the benchmark and its figures, against files
+  the tests write themselves: the suite goes from 151 to 237 and still
+  downloads nothing.
+- Learning-rate rounds, in `benchmark/rounds.py`, on the command line
+  (`--round OPTIMIZER:RATE`) and in cells of their own in the notebook: every
+  method except Adam, SPS and Armijo on one base optimizer, SGD or Adam, from
+  one rate, `1`, `1e-3` or `1e-7`, recorded in `results/<dataset>/rounds/`.
+  The schedules start from the round's rate, Polling and Efficient Polling
+  centre their grid on it and Efficient Relative Polling starts from it, its
+  `1e-1` ceiling raised to `1` in the rounds that start there.
+  SPS and Armijo never read a starting rate, so they get a test of their own
+  that moves their ceiling instead, on SGD only (`--ceiling RATE`,
+  `results/<dataset>/ceilings/`). Nothing has been run in either yet.
+  The rounds and the ceilings are one study, `python -m benchmark.rounds`,
+  which runs all of it for every dataset asked for in one pool of processes,
+  and reads it back as one table per initial rate: every method on SGD, SPS
+  and Armijo with the rate as ceiling, every method on Adam, each row with the
+  columns of the main table. `slurm/benchmark.sbatch` runs the study as one
+  job on `long-simple`, whose seven days fit the two the study takes on two
+  A100s.
+- An Initial LR column in every results table, saying what rate each method
+  was given: `1e-3, fixed` for the fixed rate, `1e-1 → 0` for cosine
+  annealing, `grid 1e-5–1e-1` for the polling methods, the ceiling SPS and
+  Armijo were held to, and so on. The main table starts its methods from
+  different rates, and a round moves all of them, so a row now says which.
+  `results_table` takes the experiment's hyperparameters for it.
+- `python -m benchmark.pool`, which makes a sweep's runs side by side, one
+  process per method and seed, four per GPU by default, each told which seed
+  the trigger ablations are calibrated from (`--calibration-seed`, since a
+  process that holds one seed would otherwise read its own run). Several
+  sweeps can share one pool, and a pool that is stopped, preempted or requeued
+  resumes from the runs left. Records are now written aside and moved into place, so a
+  run killed while writing one leaves nothing half-written to be read back.
+
+### Changed
+
+- **Efficient Relative Polling ranks its polls by loss by default**
+  (`criterion="loss"`); `criterion="score"` gives back the accuracy it used up to
+  2.0.0, step for step. In a smoke test (one seed; 3 epochs of CIFAR-10, 10 of
+  Covertype from `1e-3`, `1e-7` and `1`, with SGD and with Adam) the loss drove
+  the rate to the same places and polled far less: 0.9–1.1% of Covertype's
+  batches on SGD instead of 3.8–13.5%, 3.8% instead of 14.5% on Adam, and 10.4%
+  instead of 16.8% on CIFAR-10. Test accuracy moved between -2.5 points
+  (CIFAR-10) and +0.5, on one seed. From `1e-7` it climbed within the first
+  epoch instead of spending it on tied polls.
+  Longer runs have not been made with it. Polling and Efficient Polling keep the
+  paper's accuracy by default.
+- The benchmark keeps ranking Efficient Relative Polling by accuracy, the
+  criterion its recorded runs used, so a sweep resumes them unchanged;
+  `--criterion loss` runs the package's default.
+- The experiment code is one package, `benchmark/`, imported by both
+  `notebooks/benchmark.ipynb` and `python -m benchmark`: `datasets.py`,
+  `models.py`, `methods.py`, `sweep.py` and `plots.py`. It replaces
+  `examples/cifar10.py`, `examples/plot_results.py` and the notebook's own
+  copies of the network, the optimizer builder, the sweep and the figures,
+  which had drifted apart. Checked against the previous notebook code: runs on
+  synthetic data identical field by field, identical optimizer settings for
+  every method, and byte-identical CIFAR-10 figures.
+- `notebooks/cifar10.ipynb` becomes `notebooks/benchmark.ipynb`, and a `DATASET`
+  constant picks the dataset. It is committed without outputs (it weighed 49 MB,
+  45 MB of them two embedded animations), and CI checks that with nbstripout.
+- The model's input and class count, the divergence threshold, the results
+  directory and the checkpoint names all follow from the dataset, so a second
+  dataset cannot overwrite the first one's runs. The divergence threshold is
+  `2 * ln(num_classes)` rather than a literal `2 * ln(10)`: on CIFAR-100 the old
+  value sat *below* the loss a hundred-class run starts at, which would have
+  rolled back every batch. CIFAR-10 keeps the number the recorded runs used.
+- `SimpleCIFAR10CNN` becomes `SimpleCNN`, taking its channel and class counts
+  from the dataset; on CIFAR-10 it is the same 557,898-parameter network.
+- Normalization statistics are taken along the first axis of a sample, which is
+  per channel for an image and per feature for a table. A 0/1 flag keeps its
+  own scale (mean 0, std 1) and a feature constant over the split gets std 1
+  rather than a floor of 1e-8: two of Covertype's soil types never occur in the
+  15,120 training rows, and the floor sent every test row that has one set to
+  1e8, with a test loss in the hundreds to show for it.
+- Figures go to `images/<dataset>/` under the names the paper cites, so the
+  CIFAR-10 figures moved from `images/` to `images/cifar10/`. The poll-count
+  floor in `polls_per_epoch.png` follows the dataset's batches per epoch
+  instead of CIFAR-10's 704.
+- The trigger ablations can be calibrated to the poll rate Efficient Polling
+  measured on the first seed (`--calibrate-ablations`, or
+  `Experiment(calibrate_ablations=True)`), which is how the four new datasets
+  were run; CIFAR-10 keeps the paper's 5%.
+- `--lr` on the command line records runs as `<method>_lr<rate>`, as the
+  notebook's initial-rate runs are, instead of mixing them with the table.
+- The benchmark builds Polling, Efficient Polling and Efficient Relative Polling
+  from the package's wrappers around `Training.optimizer` instead of its SGD
+  classes, so a round can put them on Adam. On SGD the old and the new builders
+  take bit-identical steps for every method, and the tables and figures drawn
+  from the recorded runs come out identical. A new record keeps the base
+  optimizer it stepped with, and tables and legends name the fixed rate and the
+  schedules after the optimizer and rate the record holds.
+- The `examples` extra becomes `benchmark`, and `dev` also installs matplotlib
+  and nbstripout.
+- The READMEs no longer link to the paper's LaTeX source or to a local copy of
+  the base paper, neither of which is in the repository; they cite Tan et al.
+  by DOI instead.
+
+### Removed
+
+- `images/learning_rate_factor_formula.png`, `images/training_comparison_LRs.png`
+  and `images/training_comparison_losses.png`, which nothing referenced.
+
+### Fixed
+
+- The READMEs said Efficient Polling's backoff is immune to stalling at its
+  smallest candidate. It is not: the rule that holds the backoff back records
+  signal on the first poll whose candidates differ, which a single correct
+  answer at chance is enough for, and CIFAR-100 stalled all five seeds that way.
+  The docs now describe the failure and its mechanism.
+
+### Note
+
+No published CIFAR-10 number changed.
+
 ## [2.0.0] - 2026-09-07
 
 ### Changed

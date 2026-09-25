@@ -32,6 +32,7 @@ from .efficient_relative import (
     EfficientRelativePollingSGD,
 )
 from .polling import (
+    CRITERIA,
     PollingOptimizer,
     PollingSGD,
     PollResult,
@@ -40,9 +41,10 @@ from .polling import (
 )
 from .training import EpochStats, History, evaluate, fit, train_epoch
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 __all__ = [
+    "CRITERIA",
     "ArmijoOptimizer",
     "ArmijoSGD",
     "Closure",

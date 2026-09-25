@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import math
 
 import pytest
@@ -254,12 +255,13 @@ class Scripted:
 
     def __call__(self):
         lr = float(self.optimizer.param_groups[0]["lr"])
-        # Real gradients, but a reported loss value the test controls.
+        wins = self.signal and math.isclose(lr, self.winner, rel_tol=1e-9)
+        # Real gradients, but a reported loss value the test controls. A trial
+        # step, scored under no_grad, that wins also leaves the lowest loss, so
+        # the poll picks it whichever criterion ranks the trials.
         raw = self.model(self.inputs).square().sum()
-        loss = raw - raw.detach() + self.loss
-        if not self.signal:
-            return loss, 0.0
-        return loss, 1.0 if math.isclose(lr, self.winner, rel_tol=1e-9) else 0.0
+        value = self.loss - 0.5 if wins and not torch.is_grad_enabled() else self.loss
+        return raw - raw.detach() + value, 1.0 if wins else 0.0
 
 
 def clone_params(model: nn.Module) -> list[torch.Tensor]:
@@ -565,10 +567,29 @@ def test_polls_a_small_fraction_of_batches_once_there_is_signal(loss_fn) -> None
     assert not any(i.rolled_back for i in infos)
 
 
+def test_by_default_the_loss_sees_a_poll_the_accuracy_calls_blind(batch, loss_fn) -> None:
+    """On 8-sample batches the first poll ties on accuracy; the loss tells the trials apart."""
+    inputs, targets = batch
+    model = TinyNet()
+    twin = copy.deepcopy(model)
+    by_loss = EfficientRelativePollingSGD(model, lr=1e-3)
+    by_score = EfficientRelativePollingSGD(twin, lr=1e-3, criterion="score")
+
+    seen = by_loss.step(make_closure(model, loss_fn, inputs, targets))
+    blind = by_score.step(make_closure(twin, loss_fn, inputs, targets))
+
+    assert by_loss.criterion == "loss"
+    assert "criterion='loss'" in repr(by_loss)
+    assert seen.polled and seen.had_signal
+    assert seen.lr == pytest.approx(1e-2)  # a longer step down this batch's gradient
+    assert blind.polled and not blind.had_signal
+    assert blind.lr == 1e-3  # a tie keeps the centre, as in 2.0.0
+
+
 def test_selects_by_real_batch_accuracy(batch, loss_fn) -> None:
     inputs, targets = batch
     model = TinyNet()
-    poller = EfficientRelativePollingSGD(model, lr=1e-3)
+    poller = EfficientRelativePollingSGD(model, lr=1e-3, criterion="score")
     closure = make_closure(model, loss_fn, inputs, targets)
     info = poller.step(closure)
     assert info.polled
