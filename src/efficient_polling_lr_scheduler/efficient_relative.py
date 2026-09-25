@@ -4,11 +4,14 @@ Where the base method polls a *fixed* candidate set, this variant asks the user
 for one learning rate and one multiplier ``m`` and polls three candidates around
 whatever rate is currently in use: ``{X/m, X, X*m}``. The winner becomes the new
 centre ``X``, so the search window follows the rate wherever training takes it
-and nothing has to be known about the right scale in advance. When a poll comes
-back blind -- every candidate scoring the same, which batch accuracy does
-whenever a single step moves no prediction -- the next poll looks one multiplier
-farther in both directions, and keeps widening until it sees a difference; a
-poll with signal brings the window back to one multiplier.
+and nothing has to be known about the right scale in advance. A poll ranks its
+trial steps by the batch loss after each, lowest first; ``criterion="score"``
+ranks them by the closure's score instead, batch accuracy, as up to version
+2.0.0. When a poll comes back blind -- every candidate scoring the same, which
+batch accuracy does whenever a single step moves no prediction, and the loss
+only when the steps are too small to move it at all -- the next poll looks one
+multiplier farther in both directions, and keeps widening until it sees a
+difference; a poll with signal brings the window back to one multiplier.
 
 Between polls the rate is used blind, and the interval between polls, ``k``, is
 the method's confidence: it doubles while polls with signal keep confirming the
@@ -25,8 +28,8 @@ Two tie-break rules keep the relative window from drifting on its own. A poll
 whose candidates all score the same carries no information, so an ordinary poll
 keeps the current rate on a tie. The one poll right after a restart breaks ties
 *downward* instead, because a restart has a single cause -- the rate was too
-high for blind steps -- and that is the only way the rate descends once the
-batch accuracy saturates and the criterion goes blind.
+high for blind steps -- and that is the only way the rate descends once a
+criterion that saturates, as batch accuracy does, goes blind.
 
 The trend of the loss is tracked the way Adam tracks gradients: a
 bias-corrected exponential mean and a second moment of the deviations, so a
@@ -364,6 +367,14 @@ class EfficientRelativePollingOptimizer(PollingOptimizer):
         rollback_loss: absolute blow-up threshold. ``None`` derives it as
             ``rollback_factor`` times the first observed loss.
         rollback_factor: multiplier for the derived threshold.
+        criterion: what ranks the trials. ``"loss"``, the default since 2.1.0,
+            takes the lowest batch loss; ``"score"`` the highest score the
+            closure returns, batch accuracy, which is what the method used up
+            to 2.0.0. See
+            :class:`~efficient_polling_lr_scheduler.polling.PollingOptimizer`.
+            Losses almost never tie, so scored by loss a poll is blind only
+            when the trial steps are too small to move the loss at all, and it
+            confirms the rate, doubling ``k``, where accuracy would have tied.
     """
 
     def __init__(
@@ -382,6 +393,7 @@ class EfficientRelativePollingOptimizer(PollingOptimizer):
         max_reach: int = 6,
         rollback_loss: float | None = None,
         rollback_factor: float = 2.0,
+        criterion: str = "loss",
     ) -> None:
         if not isinstance(optimizer, Optimizer):
             raise TypeError(
@@ -391,7 +403,7 @@ class EfficientRelativePollingOptimizer(PollingOptimizer):
             raise ValueError("optimizer has no parameter groups")
         lr = float(optimizer.param_groups[0]["lr"])
         # The fixed candidate set is a formality here: every poll builds its own.
-        super().__init__(optimizer, candidate_lrs=(lr,), module=module)
+        super().__init__(optimizer, candidate_lrs=(lr,), module=module, criterion=criterion)
 
         self.window = Window(multiplier, lr_min, lr_max, max_reach)
         _check_bounds(lr, self.window.lr_min, self.window.lr_max)
@@ -593,7 +605,7 @@ class EfficientRelativePollingOptimizer(PollingOptimizer):
         return (
             f"{type(self).__name__}(optimizer={type(self.optimizer).__name__}, "
             f"lr={self.lr}, multiplier={self.multiplier}, "
-            f"lr_min={self.lr_min}, lr_max={self.lr_max})"
+            f"lr_min={self.lr_min}, lr_max={self.lr_max}, criterion={self.criterion!r})"
         )
 
 
@@ -610,7 +622,7 @@ class EfficientRelativePollingSGD(EfficientRelativePollingOptimizer):
     (``momentum``, ``weight_decay``, ``nesterov``, ``dampening``) or the polling
     (``multiplier``, ``lr_min``, ``lr_max``, ``spike_z``, ``blowup_z``,
     ``trend_betas``, ``best_beta``, ``warmup``, ``max_reach``, ``rollback_loss``,
-    ``rollback_factor``).
+    ``rollback_factor``, ``criterion``).
     """
 
     def __init__(

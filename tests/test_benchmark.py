@@ -364,3 +364,22 @@ def test_an_infinite_ceiling_lets_the_relative_window_roam() -> None:
     args = parse_args(["--data-dir", "/nowhere", "--relative-lr-max", "inf"])
 
     assert build_experiment(args).hyperparameters.relative.lr_max is None
+
+
+def test_the_benchmark_ranks_efficient_relative_polls_as_the_recorded_runs_did() -> None:
+    optimizer, _ = optimizer_for("efficient_relative", "cifar10")
+    assert optimizer.criterion == "score"
+
+
+def test_the_criterion_flag_reaches_efficient_relative_polling() -> None:
+    args = parse_args(["--data-dir", "/nowhere", "--criterion", "loss"])
+    hyperparameters = build_experiment(args).hyperparameters
+
+    assert hyperparameters.relative.criterion == "loss"
+    optimizer, _ = optimizer_for("efficient_relative", "cifar10", hyperparameters)
+    assert optimizer.criterion == "loss"
+
+
+def test_an_unknown_criterion_is_refused_up_front() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--data-dir", "/nowhere", "--criterion", "accuracy"])

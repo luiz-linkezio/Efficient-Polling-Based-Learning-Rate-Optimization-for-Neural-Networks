@@ -49,10 +49,12 @@ The selection mechanism is untouched, but a batch is polled only when needed:
 Both methods above choose from a *fixed* grid, and in the recorded CIFAR-10 runs the selected rate spends most of training pinned to that grid's edges: `1e-1` through the first phase, `1e-5` after the anneal. Efficient Relative Polling drops the grid. The user picks one learning rate and one multiplier `m`, and each poll tries three candidates around the rate in use; the winner becomes the new centre:
 
 ```
-C_t = {X/m, X, X·m}        X ← argmax acc(θ̂, batch)
+C_t = {X/m, X, X·m}        X ← argmin loss(θ̂, batch)
 ```
 
-When a poll comes back blind (every candidate scoring the same, which batch accuracy does whenever one step moves no prediction), the next poll looks one multiplier farther out in both directions, and keeps widening until it sees a difference; a poll with signal narrows the window back. Three rules complete it:
+Since 2.1.0 a poll keeps the candidate whose trial step leaves the lowest batch loss. Up to 2.0.0 it kept the highest batch accuracy, which `criterion="score"` gives back; the recorded runs in [Results](results.md) used it. The loss is continuous, so it tells apart candidates whose steps change no prediction, where accuracy ties, and the poll confirms the rate more often.
+
+When a poll comes back blind (every candidate scoring the same, which batch accuracy does whenever one step moves no prediction and the loss only when the steps are too small to move it), the next poll looks one multiplier farther out in both directions, and keeps widening until it sees a difference; a poll with signal narrows the window back. Three rules complete it:
 
 1. **Uncapped backoff, bounded by failure.** The poll interval `k` doubles when a scheduled poll with signal keeps the rate, a blind poll leaves it unchanged, and it has no `K_max`. Every poll checkpoints the *best* point seen so far (weights, optimizer state and rate, judged by a slow trend of the loss). When a blind stretch blows up, training goes back in time to that point, `k` drops to zero and the ceiling of the next slow start becomes half the interval that blew up; growth is exponential up to the ceiling and linear above it, as in TCP congestion control.
 2. **Ties keep the rate, except after a restart.** A tie carries no information, so an ordinary poll keeps `X`. The poll right after a restart breaks ties one notch *down*, because a restart has a single cause: a rate too high for blind steps.
@@ -71,6 +73,7 @@ optimizer = EfficientRelativePollingSGD(model, lr=1e-3, multiplier=10.0, lr_max=
 | `lr_min`, `lr_max` | none | optional bounds; the experiments cap at `1e-1`, the ceiling every other method is held to |
 | `z` | `3` | spike threshold, in deviations above the trend |
 | `ℓ_rb` | `2·ln(classes)` | blow-up threshold, as above |
+| `criterion` | `"loss"` | what ranks the trials: the batch loss, or `"score"`, the batch accuracy used up to 2.0.0 and in the recorded runs |
 
 `EfficientRelativeEpochPolling` applies the same window per epoch instead of per batch, driven by `fit(..., epoch_polling=...)`: it trains a whole epoch per candidate from one snapshot and keeps the one with the lowest mean training loss. It is kept as a documented negative result; see [Results](results.md#efficient-relative-polling).
 
